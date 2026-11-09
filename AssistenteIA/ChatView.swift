@@ -19,6 +19,8 @@ struct ChatView: View {
         VStack(spacing: 0) {
             topBar
             messageList
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             Composer(
                 text: $draft,
                 isSending: store.isSending,
