@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct SettingsView: View {
     @EnvironmentObject private var store: ChatStore
@@ -260,9 +261,18 @@ struct SettingsView: View {
             Text("Sua chave e suas conversas ficam apenas neste aparelho.")
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.textFaint)
+
+            Text(screenInfo)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(Theme.textFaint.opacity(0.7))
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard()
+    }
+
+    private var screenInfo: String {
+        let b = UIScreen.main.bounds
+        return "Tela \(Int(b.width))x\(Int(b.height)) @\(Int(UIScreen.main.scale))x"
     }
 }
