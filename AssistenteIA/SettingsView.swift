@@ -254,7 +254,7 @@ struct SettingsView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.white)
 
-            Text("Assistente IA 1.0 — roda inteiro no iPhone, sem computador.")
+            Text("Assistente IA 1.2 — roda inteiro no iPhone, sem computador.")
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.textDim)
 
@@ -273,6 +273,7 @@ struct SettingsView: View {
 
     private var screenInfo: String {
         let b = UIScreen.main.bounds
-        return "Tela \(Int(b.width))x\(Int(b.height)) @\(Int(UIScreen.main.scale))x"
+        let win = (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.windows.first?.bounds ?? .zero
+        return "Tela \(Int(b.width))x\(Int(b.height)) @\(Int(UIScreen.main.scale))x · janela \(Int(win.width))x\(Int(win.height))"
     }
 }
