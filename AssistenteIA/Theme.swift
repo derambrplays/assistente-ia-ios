@@ -14,17 +14,24 @@ struct AuroraBackground: View {
     @State private var drift: CGFloat = 0
 
     var body: some View {
-        ZStack {
-            Theme.bg
+        // GeometryReader garante que este fundo NUNCA informe um tamanho maior
+        // que a tela. Sem isso, os círculos de 540pt fazem o ZStack raiz medir
+        // 540pt de largura e o app inteiro e desenhado fora da tela.
+        GeometryReader { geo in
+            ZStack {
+                Theme.bg
 
-            blob(color: Theme.accent.opacity(0.55), size: 540)
-                .offset(x: -130 + 34 * sin(drift), y: -250 + 26 * cos(drift))
-            blob(color: Theme.accent2.opacity(0.42), size: 470)
-                .offset(x: 150 - 30 * sin(drift), y: -210 + 34 * cos(drift))
-            blob(color: Color(red: 1.0, green: 0.37, blue: 0.56).opacity(0.32), size: 500)
-                .offset(x: 120, y: 330 - 28 * cos(drift))
-            blob(color: Color(red: 0.20, green: 0.42, blue: 1.0).opacity(0.34), size: 460)
-                .offset(x: -140, y: 380 + 24 * sin(drift))
+                blob(color: Theme.accent.opacity(0.55), size: 540)
+                    .offset(x: -130 + 34 * sin(drift), y: -250 + 26 * cos(drift))
+                blob(color: Theme.accent2.opacity(0.42), size: 470)
+                    .offset(x: 150 - 30 * sin(drift), y: -210 + 34 * cos(drift))
+                blob(color: Color(red: 1.0, green: 0.37, blue: 0.56).opacity(0.32), size: 500)
+                    .offset(x: 120, y: 330 - 28 * cos(drift))
+                blob(color: Color(red: 0.20, green: 0.42, blue: 1.0).opacity(0.34), size: 460)
+                    .offset(x: -140, y: 380 + 24 * sin(drift))
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
         }
         .ignoresSafeArea()
         .onAppear {
