@@ -5,8 +5,10 @@ não usa servidor local e funciona fora de casa (Wi-Fi ou dados móveis). A úni
 do aparelho é a chamada para a API do Google Gemini.
 
 - Conversa por texto com streaming
-- Conversa por voz: fala → texto → resposta falada
+- Conversa por voz: fala → texto → resposta falada (começa a falar na primeira frase)
 - Voz natural do Gemini (ou voz offline do iPhone)
+- Anexos de fotos e arquivos (imagens, PDF, áudio, vídeo e texto)
+- Busca na internet quando você pede (com fontes)
 - Histórico de conversas salvo no aparelho
 - Chave do Gemini guardada no **Keychain** do iPhone
 - Visual "liquid glass" com fundo aurora
@@ -98,8 +100,13 @@ clique em **Start**. Não precisa apagar o app antes.
 ## Como usar
 
 - **Texto:** digite na barra de baixo e toque na seta.
+- **Anexos:** toque no clipe ao lado do campo, escolha **Fotos** ou **Arquivo** e envie.
+  Dá para anexar até 5 arquivos por mensagem (8 MB por arquivo, 14 MB no total).
+- **Pesquisa:** peça “pesquise na internet…” ou “quais são as notícias de hoje?”.
+  O app usa a busca do Google e mostra as fontes abaixo da resposta.
 - **Voz:** toque no ícone de onda ao lado do campo de texto. Fale; quando você fizer
-  silêncio por 1,5 s, ele entende e responde falando.
+  silêncio por 1,3 s, ele entende e responde falando. A fala começa assim que a
+  primeira frase da resposta chega, sem esperar o texto inteiro.
 - **Interromper:** enquanto ele fala, comece a falar. O app corta a voz e volta a ouvir.
 - **Ouvir de novo:** cada resposta tem o botão **Ouvir**.
 - **Histórico:** ícone de menu no topo esquerdo.
@@ -133,8 +140,9 @@ ios/
     ├── AssistenteIAApp.swift       # entrada do app
     ├── Info.plist                  # permissões e configuração
     ├── Models.swift                # mensagens, conversas, ajustes
+    ├── Attachment.swift            # anexos: fotos e arquivos
     ├── Keychain.swift              # chave no Keychain
-    ├── GeminiClient.swift          # API do Gemini (chat, voz, modelos)
+    ├── GeminiClient.swift          # API do Gemini (chat, voz, busca, modelos)
     ├── SpeechController.swift      # ditado nativo + detecção de silêncio
     ├── AudioPlayer.swift           # reprodução da voz
     ├── ChatStore.swift             # estado, histórico, modo voz

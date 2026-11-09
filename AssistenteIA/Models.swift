@@ -1,16 +1,61 @@
 import Foundation
 
+/// Fonte da web devolvida pela busca do Google (grounding).
+struct WebSource: Identifiable, Codable, Equatable, Hashable {
+    var title: String
+    var uri: String
+
+    var id: String { uri }
+}
+
 struct ChatMessage: Identifiable, Codable, Equatable {
     enum Role: String, Codable {
         case user
         case assistant
     }
 
-    var id: UUID = UUID()
+    var id: UUID
     var role: Role
     var text: String
-    var isError: Bool = false
-    var date: Date = Date()
+    var isError: Bool
+    var date: Date
+    var attachments: [Attachment]
+    var sources: [WebSource]
+
+    init(
+        id: UUID = UUID(),
+        role: Role,
+        text: String,
+        isError: Bool = false,
+        date: Date = Date(),
+        attachments: [Attachment] = [],
+        sources: [WebSource] = []
+    ) {
+        self.id = id
+        self.role = role
+        self.text = text
+        self.isError = isError
+        self.date = date
+        self.attachments = attachments
+        self.sources = sources
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, role, text, isError, date, attachments, sources
+    }
+
+    // Decodificação tolerante: conversas salvas por versões antigas (sem
+    // anexos/fontes) continuam funcionando depois da atualização.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        role = try container.decode(Role.self, forKey: .role)
+        text = try container.decode(String.self, forKey: .text)
+        isError = try container.decodeIfPresent(Bool.self, forKey: .isError) ?? false
+        date = try container.decodeIfPresent(Date.self, forKey: .date) ?? Date()
+        attachments = try container.decodeIfPresent([Attachment].self, forKey: .attachments) ?? []
+        sources = try container.decodeIfPresent([WebSource].self, forKey: .sources) ?? []
+    }
 }
 
 struct Conversation: Identifiable, Codable, Equatable {

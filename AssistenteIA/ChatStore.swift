@@ -30,6 +30,15 @@ final class ChatStore: ObservableObject {
     private var speechGeneration = 0
     private let storageKey = "assistente.ios.v1"
 
+    // Fala em fluxo: a primeira frase é falada enquanto o resto é gerado.
+    private var speechStreaming = false
+    private var speechStreamDone = false
+    private var speechBuffer = ""
+    private var speechPending = 0
+    private var speechScheduled = 0
+    private var speechStarted = false
+    private var lastSpeechFetch: Task<Void, Never>?
+
     init() {
         load()
         hasKey = GeminiClient.hasKey
@@ -102,6 +111,13 @@ final class ChatStore: ObservableObject {
     }
 
     func delete(_ id: UUID) {
+        if let conversation = conversations.first(where: { $0.id == id }) {
+            for message in conversation.messages {
+                for attachment in message.attachments {
+                    AttachmentStore.remove(attachment)
+                }
+            }
+        }
         conversations.removeAll { $0.id == id }
         if activeID == id {
             activeID = conversations.first?.id
@@ -111,16 +127,18 @@ final class ChatStore: ObservableObject {
 
     // MARK: - Enviar
 
-    func send(_ raw: String, speakReply: Bool = false) {
+    func send(_ raw: String, attachments: [Attachment] = [], speakReply: Bool = false) {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !isSending else { return }
+        guard !text.isEmpty || !attachments.isEmpty, !isSending else { return }
         guard hasKey else {
             banner = "Configure sua chave do Gemini para conversar."
             return
         }
 
         mutateActive { conversation in
-            conversation.messages.append(ChatMessage(role: .user, text: text))
+            conversation.messages.append(
+                ChatMessage(role: .user, text: text, attachments: attachments)
+            )
         }
 
         let assistantID = UUID()
@@ -129,12 +147,19 @@ final class ChatStore: ObservableObject {
         }
 
         let history = messages.filter { $0.id != assistantID }
-        let system = settings.systemPrompt
+        var system = settings.systemPrompt
+        if Self.looksLikeSearchRequest(text) {
+            system += "\n\nO usuário pediu explicitamente para pesquisar na internet. Use a busca do Google agora e cite as fontes."
+        }
         let model = settings.model
         let temperature = settings.temperature
 
         isSending = true
         banner = nil
+
+        if speakReply || voiceMode {
+            beginSpeechPipeline()
+        }
 
         sendTask = Task { [weak self] in
             guard let self = self else { return }
@@ -143,10 +168,15 @@ final class ChatStore: ObservableObject {
                     messages: history,
                     system: system,
                     model: model,
-                    temperature: temperature
-                ) { delta in
-                    self.appendDelta(assistantID, delta)
-                }
+                    temperature: temperature,
+                    search: true,
+                    onDelta: { delta in
+                        self.appendDelta(assistantID, delta)
+                    },
+                    onSources: { sources in
+                        self.mergeSources(assistantID, sources)
+                    }
+                )
                 self.complete(assistantID, speakReply: speakReply)
             } catch is CancellationError {
                 self.complete(assistantID, speakReply: false, interrupted: true)
@@ -164,12 +194,30 @@ final class ChatStore: ObservableObject {
     func stop() {
         sendTask?.cancel()
         sendTask = nil
+
+        if speechStreaming || speechStreamDone || speechStarted {
+            cancelSpeechPipeline()
+        }
     }
 
     private func appendDelta(_ id: UUID, _ delta: String) {
         DispatchQueue.main.async {
             self.mutateMessage(id) { message in
                 message.text += delta
+            }
+            self.consumeSpeechDelta(delta)
+        }
+    }
+
+    private func mergeSources(_ id: UUID, _ sources: [WebSource]) {
+        DispatchQueue.main.async {
+            self.mutateMessage(id) { message in
+                for source in sources where !message.sources.contains(where: { $0.uri == source.uri }) {
+                    message.sources.append(source)
+                }
+                if message.sources.count > 8 {
+                    message.sources = Array(message.sources.prefix(8))
+                }
             }
         }
     }
@@ -198,7 +246,18 @@ final class ChatStore: ObservableObject {
 
             self.save()
 
-            if speakReply || self.voiceMode {
+            if interrupted {
+                self.cancelSpeechPipeline()
+                if self.voiceMode {
+                    self.voiceState = .listening
+                    self.listenAgain()
+                }
+                return
+            }
+
+            if self.speechStreaming {
+                self.finishSpeechStream(fallback: text)
+            } else if speakReply || self.voiceMode {
                 self.speak(text)
             }
         }
@@ -207,6 +266,7 @@ final class ChatStore: ObservableObject {
     private func fail(_ id: UUID, _ message: String) {
         DispatchQueue.main.async {
             self.isSending = false
+            self.cancelSpeechPipeline()
 
             self.mutateMessage(id) { item in
                 item.text = message
@@ -241,6 +301,9 @@ final class ChatStore: ObservableObject {
         voiceState = .listening
         liveTranscript = ""
 
+        // Deixa o alto-falante pronto antes da primeira resposta.
+        player.prepare(voiceMode: true)
+
         Task {
             let allowed = await speech.requestAuthorization()
             await MainActor.run {
@@ -259,9 +322,11 @@ final class ChatStore: ObservableObject {
         voiceMode = false
         voiceState = .idle
         liveTranscript = ""
-        speechGeneration += 1
+
+        sendTask?.cancel()
+        sendTask = nil
+        cancelSpeechPipeline()
         speech.stop()
-        player.stop()
         micLevel = 0
     }
 
@@ -281,7 +346,7 @@ final class ChatStore: ObservableObject {
             self?.banner = message
         }
 
-        speech.start(silence: 1.5)
+        speech.start(silence: 1.3)
     }
 
     private func handleHeard(_ text: String) {
@@ -306,43 +371,205 @@ final class ChatStore: ObservableObject {
         }
 
         lastSpoken = text
-        voiceState = .speaking
-        speechGeneration += 1
-        let generation = speechGeneration
+        cancelSpeechPipeline()
+        beginSpeechPipeline()
+        speechBuffer = text
+        finishSpeechStream(fallback: text)
+    }
 
-        if settings.naturalVoice {
-            Task { [weak self] in
-                guard let self = self else { return }
-                do {
-                    let data = try await GeminiClient.speak(text: text, voice: self.settings.ttsVoice)
-                    await MainActor.run {
-                        guard generation == self.speechGeneration else { return }
-                        do {
-                            try self.player.play(data: data, voiceMode: self.voiceMode) { [weak self] in
-                                self?.afterSpeech()
-                            }
-                            if self.voiceMode { self.startBargeIn() }
-                        } catch {
-                            self.speakOffline(text)
-                        }
-                    }
-                } catch {
-                    await MainActor.run {
-                        guard generation == self.speechGeneration else { return }
-                        self.speakOffline(text)
-                    }
-                }
-            }
-        } else {
-            speakOffline(text)
+    // MARK: - Fala em fluxo (primeira frase antes da resposta terminar)
+
+    private func beginSpeechPipeline() {
+        lastSpeechFetch?.cancel()
+        speechGeneration += 1
+        speechBuffer = ""
+        speechStreaming = true
+        speechStreamDone = false
+        speechPending = 0
+        speechScheduled = 0
+        speechStarted = false
+        lastSpeechFetch = nil
+
+        let generation = speechGeneration
+        player.beginStream(voiceMode: voiceMode) { [weak self] in
+            self?.afterStreamSpeech(generation)
         }
     }
 
-    private func speakOffline(_ text: String) {
-        player.speakOffline(text, voiceMode: voiceMode) { [weak self] in
-            self?.afterSpeech()
+    private func cancelSpeechPipeline() {
+        lastSpeechFetch?.cancel()
+        speechGeneration += 1
+        speechStreaming = false
+        speechStreamDone = false
+        speechBuffer = ""
+        speechPending = 0
+        speechScheduled = 0
+        speechStarted = false
+        lastSpeechFetch = nil
+        player.stop()
+    }
+
+    private func consumeSpeechDelta(_ delta: String) {
+        guard speechStreaming else { return }
+        speechBuffer += delta
+        for chunk in extractSpeechChunks(flush: false) {
+            enqueueSpeechChunk(chunk)
         }
-        if voiceMode { startBargeIn() }
+    }
+
+    private func finishSpeechStream(fallback: String) {
+        guard speechStreaming || speechStreamDone else { return }
+        speechStreaming = false
+        speechStreamDone = true
+
+        for chunk in extractSpeechChunks(flush: true) {
+            enqueueSpeechChunk(chunk)
+        }
+
+        if speechScheduled == 0 {
+            let clean = stripMarkdown(fallback)
+            if !clean.isEmpty {
+                speechScheduled += 1
+                player.enqueueSpeech(clean)
+                markSpeechStarted()
+            }
+        }
+
+        maybeEndSpeech()
+    }
+
+    private func maybeEndSpeech() {
+        guard speechStreamDone, speechPending == 0 else { return }
+        player.endStream()
+    }
+
+    private func enqueueSpeechChunk(_ raw: String) {
+        let text = stripMarkdown(raw)
+        guard !text.isEmpty else { return }
+
+        speechScheduled += 1
+        let generation = speechGeneration
+
+        if !settings.naturalVoice {
+            player.enqueueSpeech(text)
+            markSpeechStarted()
+            return
+        }
+
+        speechPending += 1
+        let previous = lastSpeechFetch
+        let voice = settings.ttsVoice
+
+        let task = Task { [weak self] in
+            await previous?.value
+            guard let self = self else { return }
+            do {
+                let data = try await GeminiClient.speak(text: text, voice: voice)
+                await MainActor.run {
+                    guard generation == self.speechGeneration else { return }
+                    self.speechPending -= 1
+                    self.player.enqueue(data: data)
+                    self.markSpeechStarted()
+                    self.maybeEndSpeech()
+                }
+            } catch {
+                await MainActor.run {
+                    guard generation == self.speechGeneration else { return }
+                    self.speechPending -= 1
+                    self.player.enqueueSpeech(text)
+                    self.markSpeechStarted()
+                    self.maybeEndSpeech()
+                }
+            }
+        }
+        lastSpeechFetch = task
+    }
+
+    private func markSpeechStarted() {
+        guard !speechStarted else { return }
+        speechStarted = true
+        voiceState = .speaking
+        startBargeIn()
+    }
+
+    private func afterStreamSpeech(_ generation: Int) {
+        DispatchQueue.main.async {
+            guard generation == self.speechGeneration else { return }
+
+            self.speechStreaming = false
+            self.speechStreamDone = false
+            self.speechBuffer = ""
+            self.speechPending = 0
+            self.speechScheduled = 0
+            self.speechStarted = false
+            self.lastSpeechFetch = nil
+            self.afterSpeech()
+        }
+    }
+
+    /// Separa a resposta em frases para começar a falar o quanto antes.
+    private func extractSpeechChunks(flush: Bool) -> [String] {
+        var chunks: [String] = []
+        let minLength = 24
+        let maxLength = 240
+
+        while true {
+            let text = speechBuffer
+            guard !text.isEmpty else { break }
+
+            var cut: String.Index?
+
+            var index = text.startIndex
+            while index < text.endIndex {
+                let character = text[index]
+                if character == "." || character == "!" || character == "?" || character == "…" || character == "\n" {
+                    let next = text.index(after: index)
+                    if next == text.endIndex {
+                        if flush { cut = next }
+                        break
+                    }
+                    if character == "\n" {
+                        if text.distance(from: text.startIndex, to: next) >= minLength {
+                            cut = next
+                            break
+                        }
+                    } else {
+                        let after = text[next]
+                        if after == " " || after == "\n" || after == "\"" {
+                            if text.distance(from: text.startIndex, to: next) >= minLength {
+                                cut = next
+                                break
+                            }
+                        }
+                    }
+                }
+                index = text.index(after: index)
+            }
+
+            if cut == nil && text.count >= maxLength {
+                let limit = text.index(text.startIndex, offsetBy: maxLength)
+                let prefix = text[text.startIndex..<limit]
+                if let space = prefix.lastIndex(of: " ") {
+                    cut = space
+                }
+            }
+
+            if cut == nil && flush {
+                cut = text.endIndex
+            }
+
+            guard let boundary = cut else { break }
+
+            let piece = String(text[text.startIndex..<boundary])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            speechBuffer = String(text[boundary...])
+
+            if !piece.isEmpty {
+                chunks.append(piece)
+            }
+        }
+
+        return chunks
     }
 
     private func afterSpeech() {
@@ -377,8 +604,9 @@ final class ChatStore: ObservableObject {
     }
 
     private func interrupt() {
-        speechGeneration += 1
-        player.stop()
+        sendTask?.cancel()
+        sendTask = nil
+        cancelSpeechPipeline()
         speech.stop()
         liveTranscript = ""
         voiceState = .listening
@@ -441,9 +669,33 @@ final class ChatStore: ObservableObject {
 
         if conversations[index].title == "Nova conversa",
            let firstUser = conversations[index].messages.first(where: { $0.role == .user }) {
-            let title = firstUser.text.replacingOccurrences(of: "\n", with: " ")
-            conversations[index].title = String(title.prefix(42))
+            let base = firstUser.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let title: String
+            if !base.isEmpty {
+                title = base
+            } else if let first = firstUser.attachments.first {
+                title = "Anexo: " + first.name
+            } else {
+                title = "Nova conversa"
+            }
+            if title != "Nova conversa" {
+                let singleLine = title.replacingOccurrences(of: "\n", with: " ")
+                conversations[index].title = String(singleLine.prefix(42))
+            }
         }
+    }
+
+    /// Detecta pedidos explícitos de busca para reforçar a instrução do modelo.
+    static func looksLikeSearchRequest(_ text: String) -> Bool {
+        let folded = text
+            .lowercased()
+            .folding(options: .diacriticInsensitive, locale: Locale(identifier: "pt_BR"))
+        let keywords = [
+            "pesquis", "procure", "procura", "busque", "buscar",
+            "google", "internet", "noticia", "atualizad", "cotacao",
+            "previsao do tempo", "o que aconteceu"
+        ]
+        return keywords.contains { folded.contains($0) }
     }
 
     func stripMarkdown(_ text: String) -> String {

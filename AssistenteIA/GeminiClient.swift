@@ -3,6 +3,7 @@ import Foundation
 struct GeminiError: LocalizedError {
     let message: String
     var retryable: Bool = false
+    var status: Int = 0
 
     var errorDescription: String? { message }
 }
@@ -51,14 +52,94 @@ enum GeminiClient {
         request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
     }
 
+    static let searchInstruction = """
+
+    Você tem acesso à busca do Google. Use a busca sempre que o usuário pedir para pesquisar na internet, conferir algo, ou quando a resposta depender de informações atuais, notícias ou dados recentes. Baseie a resposta nos resultados encontrados e cite as fontes.
+    """
+
+    private static let searchLock = NSLock()
+    private static var searchUnsupported: Set<String> = []
+
+    private static func supportsSearch(_ model: String) -> Bool {
+        searchLock.lock()
+        defer { searchLock.unlock() }
+        return !searchUnsupported.contains(model)
+    }
+
+    private static func markSearchUnsupported(_ model: String) {
+        searchLock.lock()
+        searchUnsupported.insert(model)
+        searchLock.unlock()
+    }
+
     // MARK: - Conversa (streaming)
+
+    private static func contentParts(
+        for message: ChatMessage,
+        budget: inout Int
+    ) -> [[String: Any]] {
+        var parts: [[String: Any]] = []
+
+        for attachment in message.attachments {
+            if attachment.isText, let text = AttachmentStore.text(for: attachment) {
+                guard attachment.byteCount <= budget else { continue }
+                budget -= attachment.byteCount
+                parts.append(["text": "Arquivo anexado: \(attachment.name)\n\n\(text)"])
+                continue
+            }
+
+            guard let data = AttachmentStore.data(for: attachment) else { continue }
+            guard data.count <= budget else {
+                parts.append([
+                    "text": "[O arquivo \(attachment.name) não foi incluído porque o limite de tamanho da conversa foi atingido.]"
+                ])
+                continue
+            }
+            budget -= data.count
+            parts.append([
+                "inlineData": [
+                    "mimeType": attachment.mimeType,
+                    "data": data.base64EncodedString()
+                ]
+            ])
+        }
+
+        let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty {
+            parts.append(["text": text])
+        }
+        return parts
+    }
+
+    private static func requestBody(
+        contents: [[String: Any]],
+        system: String,
+        temperature: Double,
+        search: Bool
+    ) throws -> Data {
+        let systemText = search ? system + searchInstruction : system
+        var body: [String: Any] = [
+            "contents": contents,
+            "systemInstruction": ["parts": [["text": systemText]]],
+            "generationConfig": [
+                "temperature": max(0.0, min(2.0, temperature)),
+                "maxOutputTokens": 8192
+            ]
+        ]
+        if search {
+            body["tools"] = [["google_search": [String: Any]()]]
+        }
+        return try JSONSerialization.data(withJSONObject: body)
+    }
 
     static func streamChat(
         messages: [ChatMessage],
         system: String,
         model: String,
         temperature: Double,
-        onDelta: @escaping (String) -> Void
+        search: Bool = true,
+        onDelta: @escaping (String) -> Void,
+        onSources: (([WebSource]) -> Void)? = nil
     ) async throws {
         let key = apiKey
         guard !key.isEmpty else {
@@ -66,14 +147,17 @@ enum GeminiClient {
         }
 
         var contents: [[String: Any]] = []
-        for message in messages {
-            let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { continue }
+        var budget = AttachmentStore.maxTotalBytes
+        for message in messages.reversed() {
+            let parts = contentParts(for: message, budget: &budget)
+            guard !parts.isEmpty else { continue }
             contents.append([
                 "role": message.role == .user ? "user" : "model",
-                "parts": [["text": text]]
+                "parts": parts
             ])
         }
+        contents.reverse()
+
         if contents.count > 40 {
             contents = Array(contents.suffix(40))
         }
@@ -84,42 +168,53 @@ enum GeminiClient {
             throw GeminiError(message: "Escreva ou fale alguma coisa para enviar.")
         }
 
-        let generation: [String: Any] = [
-            "temperature": max(0.0, min(2.0, temperature)),
-            "maxOutputTokens": 8192
-        ]
-
-        let body: [String: Any] = [
-            "contents": contents,
-            "systemInstruction": ["parts": [["text": system]]],
-            "generationConfig": generation
-        ]
-        let bodyData = try JSONSerialization.data(withJSONObject: body)
-
         var candidates = [model]
         for fallback in chatFallbacks where fallback != model {
             candidates.append(fallback)
         }
 
-        var lastError: GeminiError = GeminiError(message: "O Gemini não respondeu. Tente de novo.")
+        var lastError = GeminiError(message: "O Gemini não respondeu. Tente de novo.")
         for candidate in candidates {
-            var emitted = false
-            do {
-                try await streamOnce(model: candidate, bodyData: bodyData, key: key) { delta in
-                    emitted = true
-                    onDelta(delta)
+            var tryingSearch = search && supportsSearch(candidate)
+            while true {
+                var emitted = false
+                do {
+                    let bodyData = try requestBody(
+                        contents: contents,
+                        system: system,
+                        temperature: temperature,
+                        search: tryingSearch
+                    )
+                    try await streamOnce(
+                        model: candidate,
+                        bodyData: bodyData,
+                        key: key,
+                        onDelta: { delta in
+                            emitted = true
+                            onDelta(delta)
+                        },
+                        onSources: onSources
+                    )
+                    return
+                } catch let error as GeminiError {
+                    if emitted { throw error }
+                    // Alguns modelos não aceitam a ferramenta de busca.
+                    // Tenta o mesmo modelo sem ela antes de trocar de modelo.
+                    if tryingSearch && error.status == 400 {
+                        markSearchUnsupported(candidate)
+                        tryingSearch = false
+                        continue
+                    }
+                    lastError = error
+                    if error.retryable { break }
+                    throw error
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    if Task.isCancelled { throw CancellationError() }
+                    lastError = GeminiError(message: error.localizedDescription, retryable: true)
+                    break
                 }
-                return
-            } catch let error as GeminiError {
-                if emitted { throw error }
-                lastError = error
-                if error.retryable { continue }
-                throw error
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                if Task.isCancelled { throw CancellationError() }
-                lastError = GeminiError(message: error.localizedDescription, retryable: true)
             }
         }
         throw lastError
@@ -129,7 +224,8 @@ enum GeminiClient {
         model: String,
         bodyData: Data,
         key: String,
-        onDelta: @escaping (String) -> Void
+        onDelta: @escaping (String) -> Void,
+        onSources: (([WebSource]) -> Void)?
     ) async throws {
         guard let url = URL(string: "\(apiBase)/models/\(model):streamGenerateContent?alt=sse") else {
             throw GeminiError(message: "Endereço inválido.")
@@ -155,7 +251,8 @@ enum GeminiClient {
             let retryable = [429, 500, 502, 503].contains(http.statusCode)
             throw GeminiError(
                 message: friendly(http.statusCode),
-                retryable: retryable
+                retryable: retryable,
+                status: http.statusCode
             )
         }
 
@@ -169,7 +266,15 @@ enum GeminiClient {
                 continue
             }
             guard let candidates = object["candidates"] as? [[String: Any]],
-                  let content = candidates.first?["content"] as? [String: Any],
+                  let candidate = candidates.first else {
+                continue
+            }
+
+            if let sources = webSources(from: candidate), !sources.isEmpty {
+                onSources?(sources)
+            }
+
+            guard let content = candidate["content"] as? [String: Any],
                   let parts = content["parts"] as? [[String: Any]] else {
                 continue
             }
@@ -184,6 +289,25 @@ enum GeminiClient {
         if !gotAny {
             throw GeminiError(message: "O Gemini não respondeu. Tente de novo.", retryable: true)
         }
+    }
+
+    private static func webSources(from candidate: [String: Any]) -> [WebSource]? {
+        guard let metadata = candidate["groundingMetadata"] as? [String: Any],
+              let chunks = metadata["groundingChunks"] as? [[String: Any]] else {
+            return nil
+        }
+        var sources: [WebSource] = []
+        for chunk in chunks {
+            guard let web = chunk["web"] as? [String: Any],
+                  let uri = web["uri"] as? String, !uri.isEmpty else {
+                continue
+            }
+            let title = (web["title"] as? String) ?? uri
+            if !sources.contains(where: { $0.uri == uri }) {
+                sources.append(WebSource(title: title, uri: uri))
+            }
+        }
+        return sources
     }
 
     // MARK: - Voz (Gemini TTS)

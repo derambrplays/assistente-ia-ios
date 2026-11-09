@@ -6,12 +6,13 @@ struct ChatView: View {
     @Binding var showConversations: Bool
 
     @State private var draft = ""
+    @State private var attachments: [Attachment] = []
     @FocusState private var inputFocused: Bool
 
     private let suggestions = [
+        "Pesquise na internet as notícias de hoje",
         "Explique algo complicado de um jeito simples",
-        "Me ajude a escrever uma mensagem",
-        "Resuma um texto que eu colar",
+        "Resuma o arquivo que eu anexar",
         "Monte um plano para a minha semana"
     ]
 
@@ -23,11 +24,13 @@ struct ChatView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             Composer(
                 text: $draft,
+                attachments: $attachments,
                 isSending: store.isSending,
                 focused: $inputFocused,
                 onSend: send,
                 onStop: { store.stop() },
-                onVoice: { store.startVoiceMode() }
+                onVoice: { store.startVoiceMode() },
+                onError: { store.banner = $0 }
             )
         }
     }
@@ -130,7 +133,7 @@ struct ChatView: View {
                     Text("Assistente IA")
                         .font(.system(size: 25, weight: .bold))
                         .foregroundStyle(.white)
-                    Text("Seu assistente pessoal, por texto e voz.")
+                    Text("Seu assistente pessoal, por texto, voz e arquivos.")
                         .font(.system(size: 13.5))
                         .foregroundStyle(Theme.textDim)
                 }
@@ -165,9 +168,12 @@ struct ChatView: View {
 
     private func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty || !attachments.isEmpty else { return }
+
+        let pending = attachments
         draft = ""
+        attachments = []
         inputFocused = false
-        store.send(text)
+        store.send(text, attachments: pending)
     }
 }

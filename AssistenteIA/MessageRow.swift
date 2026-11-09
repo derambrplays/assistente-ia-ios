@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct MessageRow: View {
     let message: ChatMessage
@@ -16,6 +17,10 @@ struct MessageRow: View {
 
             VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
                 content
+
+                if !isUser && !message.sources.isEmpty {
+                    sourcesView
+                }
 
                 if !isUser && !message.text.isEmpty {
                     Button(action: onSpeak) {
@@ -58,25 +63,61 @@ struct MessageRow: View {
 
     @ViewBuilder
     private var content: some View {
-        if message.text.isEmpty && !isUser {
+        if message.text.isEmpty && message.attachments.isEmpty && !isUser {
             TypingIndicator()
                 .padding(.horizontal, 16)
                 .padding(.vertical, 15)
                 .glassCard(radius: 20, strength: 0.75)
         } else {
-            Text(attributed)
-                .font(.system(size: 15.5))
-                .foregroundStyle(message.isError ? Theme.danger : Color.white)
-                .textSelection(.enabled)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 11)
-                .background(bubbleBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .strokeBorder(bubbleBorder, lineWidth: 1)
-                )
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(message.attachments) { attachment in
+                    AttachmentPreview(attachment: attachment)
+                }
+
+                if !message.text.isEmpty {
+                    Text(attributed)
+                        .font(.system(size: 15.5))
+                        .foregroundStyle(message.isError ? Theme.danger : Color.white)
+                        .textSelection(.enabled)
+                }
+            }
+            .padding(.horizontal, message.attachments.isEmpty ? 14 : 8)
+            .padding(.vertical, message.attachments.isEmpty ? 11 : 8)
+            .background(bubbleBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(bubbleBorder, lineWidth: 1)
+            )
         }
+    }
+
+    private var sourcesView: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label("Fontes da web", systemImage: "globe")
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(Theme.textFaint)
+
+            ForEach(message.sources.prefix(5)) { source in
+                if let url = URL(string: source.uri) {
+                    Link(destination: url) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "link")
+                                .font(.system(size: 9.5, weight: .semibold))
+                            Text(source.title.isEmpty ? source.uri : source.title)
+                                .font(.system(size: 11))
+                                .lineLimit(1)
+                        }
+                        .foregroundStyle(Theme.accent2)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(Color.white.opacity(0.05)))
+                        .overlay(Capsule().strokeBorder(Theme.hairline))
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 2)
     }
 
     @ViewBuilder
@@ -102,5 +143,50 @@ struct MessageRow: View {
 
     private var attributed: AttributedString {
         (try? AttributedString(markdown: message.text)) ?? AttributedString(message.text)
+    }
+}
+
+private struct AttachmentPreview: View {
+    let attachment: Attachment
+
+    var body: some View {
+        if attachment.isImage, let image = AttachmentStore.image(for: attachment) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 200, height: 150)
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.16))
+                )
+        } else {
+            HStack(spacing: 8) {
+                Image(systemName: attachment.symbol)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.accent2)
+                    .frame(width: 30, height: 30)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.white.opacity(0.08))
+                    )
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(attachment.name)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Text(attachment.sizeText)
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.textFaint)
+                }
+            }
+            .padding(6)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.white.opacity(0.06))
+            )
+        }
     }
 }

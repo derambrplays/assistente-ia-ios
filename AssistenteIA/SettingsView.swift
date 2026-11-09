@@ -254,9 +254,13 @@ struct SettingsView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.white)
 
-            Text("Assistente IA 1.2 — roda inteiro no iPhone, sem computador.")
+            Text("Assistente IA 1.3 — roda inteiro no iPhone, sem computador.")
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.textDim)
+
+            Text("Anexe fotos e arquivos, fale por voz e peça para pesquisar na internet.")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textFaint)
 
             Text("Sua chave e suas conversas ficam apenas neste aparelho.")
                 .font(.system(size: 12))
