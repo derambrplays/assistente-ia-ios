@@ -21,11 +21,12 @@ struct Composer: View {
                 Image(systemName: "waveform")
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.white)
-                    .frame(width: 38, height: 38)
+                    .frame(width: 40, height: 40)
                     .background(Circle().fill(Theme.accent.opacity(0.22)))
                     .overlay(Circle().strokeBorder(Theme.accent.opacity(0.45)))
             }
             .buttonStyle(PressableStyle())
+            .fixedSize()
 
             TextField("Pergunte algo…", text: $text, axis: .vertical)
                 .lineLimit(1...5)
@@ -34,6 +35,7 @@ struct Composer: View {
                 .focused($focused)
                 .padding(.horizontal, 13)
                 .padding(.vertical, 9)
+                .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: 17, style: .continuous)
                         .fill(Color.white.opacity(0.06))
@@ -53,15 +55,17 @@ struct Composer: View {
             } label: {
                 Image(systemName: isSending ? "stop.fill" : "arrow.up")
                     .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 38, height: 38)
+                    .foregroundStyle(isSending || canSend ? Color.white : Color.white.opacity(0.45))
+                    .frame(width: 40, height: 40)
                     .background(
                         Circle().fill(
                             isSending
-                                ? AnyShapeStyle(Color.white.opacity(0.14))
+                                ? AnyShapeStyle(Color.white.opacity(0.16))
                                 : AnyShapeStyle(
                                     LinearGradient(
-                                        colors: [Theme.accent, Theme.accent.opacity(0.75)],
+                                        colors: canSend
+                                            ? [Theme.accent, Theme.accent.opacity(0.75)]
+                                            : [Color.white.opacity(0.10), Color.white.opacity(0.07)],
                                         startPoint: .topLeading,
                                         endPoint: .bottomTrailing
                                     )
@@ -72,9 +76,10 @@ struct Composer: View {
             }
             .buttonStyle(PressableStyle())
             .disabled(!isSending && !canSend)
-            .opacity(!isSending && !canSend ? 0.45 : 1)
+            .fixedSize()
         }
         .padding(8)
+        .frame(maxWidth: .infinity)
         .glassCard(radius: 23, strength: 0.9)
         .padding(.horizontal, 12)
         .padding(.top, 6)
