@@ -37,6 +37,7 @@ final class ChatStore: ObservableObject {
     private var speechPending = 0
     private var speechScheduled = 0
     private var speechStarted = false
+    private var speechChunkCount = 0
     private var lastSpeechFetch: Task<Void, Never>?
 
     init() {
@@ -388,6 +389,7 @@ final class ChatStore: ObservableObject {
         speechPending = 0
         speechScheduled = 0
         speechStarted = false
+        speechChunkCount = 0
         lastSpeechFetch = nil
 
         let generation = speechGeneration
@@ -447,6 +449,7 @@ final class ChatStore: ObservableObject {
         let text = stripMarkdown(raw)
         guard !text.isEmpty else { return }
 
+        speechChunkCount += 1
         speechScheduled += 1
         let generation = speechGeneration
 
@@ -510,8 +513,10 @@ final class ChatStore: ObservableObject {
     /// Separa a resposta em frases para começar a falar o quanto antes.
     private func extractSpeechChunks(flush: Bool) -> [String] {
         var chunks: [String] = []
-        let minLength = 24
-        let maxLength = 240
+        // A primeira frase é curta para a voz começar rápido; depois agrupamos
+        // mais texto por pedido, para não gastar cota à toa.
+        let minLength = speechChunkCount == 0 ? 24 : 170
+        let maxLength = 320
 
         while true {
             let text = speechBuffer

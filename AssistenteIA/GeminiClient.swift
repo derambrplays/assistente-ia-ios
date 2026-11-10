@@ -4,6 +4,7 @@ struct GeminiError: LocalizedError {
     let message: String
     var retryable: Bool = false
     var status: Int = 0
+    var dailyQuota: Bool = false
 
     var errorDescription: String? { message }
 }
@@ -90,7 +91,7 @@ enum GeminiClient {
         case 401, 403: return "Chave do Gemini inválida ou sem permissão. Confira a chave nas Configurações."
         case 404: return "Modelo não encontrado. Escolha outro nas Configurações."
         case 413: return "Arquivo muito grande para enviar."
-        case 429: return "Limite de uso atingido. Aguarde um pouco e tente de novo."
+        case 429: return "O limite de uso do Gemini foi atingido. Se for a cota diária, troque de modelo nas Configurações (cada modelo tem cota própria) ou aguarde a renovação, à meia-noite no horário do Pacífico."
         case 500, 502, 503: return "O Gemini está sobrecarregado agora. Tente de novo em instantes."
         default: return "Erro \(code) ao falar com o Gemini."
         }
@@ -119,6 +120,48 @@ enum GeminiClient {
         searchLock.lock()
         searchUnsupported.insert(model)
         searchLock.unlock()
+    }
+
+    // MARK: - Cota diária (cada modelo tem a própria cota no plano gratuito)
+
+    private static let quotaLock = NSLock()
+    private static var exhaustedModels: Set<String> = []
+    private static var quotaDay: String = ""
+
+    private static func dayKey() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone(identifier: "America/Los_Angeles") ?? .current
+        return formatter.string(from: Date())
+    }
+
+    private static func refreshQuotaDayLocked() {
+        let day = dayKey()
+        if quotaDay != day {
+            quotaDay = day
+            exhaustedModels.removeAll()
+        }
+    }
+
+    static func isExhausted(_ model: String) -> Bool {
+        quotaLock.lock()
+        defer { quotaLock.unlock() }
+        refreshQuotaDayLocked()
+        return exhaustedModels.contains(model)
+    }
+
+    static func exhaustedList() -> Set<String> {
+        quotaLock.lock()
+        defer { quotaLock.unlock() }
+        refreshQuotaDayLocked()
+        return exhaustedModels
+    }
+
+    private static func markExhausted(_ model: String) {
+        quotaLock.lock()
+        refreshQuotaDayLocked()
+        exhaustedModels.insert(model)
+        quotaLock.unlock()
     }
 
     // MARK: - Conversa (streaming)
@@ -221,9 +264,20 @@ enum GeminiClient {
         for candidate in [model] + (await chatModels()) + chatFallbacks where !candidates.contains(candidate) {
             candidates.append(candidate)
         }
-        if candidates.count > 6 {
-            candidates = Array(candidates.prefix(6))
+
+        let withQuota = candidates.filter { !isExhausted($0) }
+        if withQuota.isEmpty {
+            throw GeminiError(
+                message: """
+                A cota diária gratuita do Gemini acabou para todos os modelos conhecidos. \
+                Ela renova à meia-noite no horário do Pacífico (por volta das 05h no Brasil). \
+                Se quiser continuar agora, crie outra chave no Google AI Studio e cole nas Configurações.
+                """,
+                status: 429,
+                dailyQuota: true
+            )
         }
+        candidates = Array(withQuota.prefix(6))
 
         let hasMedia = contents.contains { content in
             guard let parts = content["parts"] as? [[String: Any]] else { return false }
@@ -262,8 +316,9 @@ enum GeminiClient {
                         tryingSearch = false
                         continue
                     }
+                    if error.dailyQuota { markExhausted(candidate) }
                     lastError = error
-                    // Modelo inexistente, ou modelo que não aceita imagem:
+                    // Modelo sem cota hoje, inexistente, ou que não aceita imagem:
                     // em vez de desistir, tenta o próximo da lista.
                     if error.retryable || error.status == 404 || (error.status == 400 && hasMedia) {
                         break
@@ -298,6 +353,15 @@ enum GeminiClient {
         return String(trimmed.prefix(300))
     }
 
+    /// Identifica se o 429 é cota diária (e não apenas limite por minuto).
+    private static func isDailyQuota(_ raw: String) -> Bool {
+        let lower = raw.lowercased()
+        return lower.contains("perday")
+            || lower.contains("per day")
+            || lower.contains("daily")
+            || lower.contains("por dia")
+    }
+
     private static func streamOnce(
         model: String,
         bodyData: Data,
@@ -330,10 +394,12 @@ enum GeminiClient {
             let base = friendly(http.statusCode)
             let reason = apiReason(from: detail)
             let message = reason.isEmpty ? base : "\(base)\n\nDetalhe da API (\(http.statusCode)): \(reason)"
+            let daily = http.statusCode == 429 && isDailyQuota(detail)
             throw GeminiError(
                 message: message,
                 retryable: retryable,
-                status: http.statusCode
+                status: http.statusCode,
+                dailyQuota: daily
             )
         }
 

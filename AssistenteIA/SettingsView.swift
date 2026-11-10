@@ -123,13 +123,14 @@ struct SettingsView: View {
 
             Picker("Modelo", selection: $store.settings.model) {
                 ForEach(models, id: \.self) { model in
-                    Text(model).tag(model)
+                    Text(GeminiClient.isExhausted(model) ? "\(model) — sem cota hoje" : model)
+                        .tag(model)
                 }
             }
             .pickerStyle(.menu)
             .tint(Theme.accent)
 
-            Text("Para conversa por voz, o flash-lite responde mais rápido.")
+            Text("Para conversa por voz, o flash-lite responde mais rápido. No plano gratuito cada modelo tem cota diária própria: se um esgotar, o app tenta outro sozinho.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(Theme.textFaint)
 
