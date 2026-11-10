@@ -80,7 +80,7 @@ final class ChatStore: ObservableObject {
 
     func refreshModels() {
         Task {
-            let models = (try? await GeminiClient.listModels()) ?? GeminiClient.chatFallbacks
+            let models = await GeminiClient.chatModels()
             await MainActor.run {
                 self.availableModels = models
                 if !models.contains(self.settings.model), let first = models.first {

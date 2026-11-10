@@ -29,6 +29,55 @@ enum GeminiClient {
         "Zephyr", "Sulafat", "Achird", "Laomedeia", "Callirrhoe", "Fenrir"
     ]
 
+    /// Prefere modelos rápidos e baratos, mas mantém os demais como alternativa.
+    private static func preferenceScore(_ id: String) -> Int {
+        let lower = id.lowercased()
+        var score = 0
+        if lower.contains("flash") { score += 40 }
+        if lower.contains("lite") { score += 12 }
+        if lower.contains("pro") { score += 6 }
+        if lower.contains("latest") { score += 5 }
+        if lower.contains("preview") || lower.contains("exp") { score -= 4 }
+        if lower.hasSuffix("-001") || lower.hasSuffix("-002") || lower.hasSuffix("-003") { score -= 3 }
+        if lower.contains("thinking") { score -= 2 }
+        return score
+    }
+
+    static func preferredOrder(_ models: [String]) -> [String] {
+        models.sorted { a, b in
+            let sa = preferenceScore(a)
+            let sb = preferenceScore(b)
+            if sa != sb { return sa > sb }
+            return a < b
+        }
+    }
+
+    private static let modelCacheLock = NSLock()
+    private static var modelCache: [String] = []
+    private static var modelCacheDate: Date?
+
+    /// Lista de modelos de conversa disponíveis, priorizando os mais adequados.
+    static func chatModels() async -> [String] {
+        modelCacheLock.lock()
+        let cached = modelCache
+        let stamp = modelCacheDate
+        modelCacheLock.unlock()
+
+        if !cached.isEmpty, let stamp, Date().timeIntervalSince(stamp) < 600 {
+            return cached
+        }
+
+        let listed = (try? await listModels()) ?? []
+        let ordered = preferredOrder(listed.filter { !$0.isEmpty })
+        let result = ordered.isEmpty ? chatFallbacks : ordered
+
+        modelCacheLock.lock()
+        modelCache = result
+        modelCacheDate = Date()
+        modelCacheLock.unlock()
+        return result
+    }
+
     static var apiKey: String {
         (Keychain.load() ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -168,9 +217,17 @@ enum GeminiClient {
             throw GeminiError(message: "Escreva ou fale alguma coisa para enviar.")
         }
 
-        var candidates = [model]
-        for fallback in chatFallbacks where fallback != model {
-            candidates.append(fallback)
+        var candidates: [String] = []
+        for candidate in [model] + (await chatModels()) + chatFallbacks where !candidates.contains(candidate) {
+            candidates.append(candidate)
+        }
+        if candidates.count > 6 {
+            candidates = Array(candidates.prefix(6))
+        }
+
+        let hasMedia = contents.contains { content in
+            guard let parts = content["parts"] as? [[String: Any]] else { return false }
+            return parts.contains { $0["inlineData"] != nil }
         }
 
         var lastError = GeminiError(message: "O Gemini não respondeu. Tente de novo.")
@@ -206,7 +263,11 @@ enum GeminiClient {
                         continue
                     }
                     lastError = error
-                    if error.retryable { break }
+                    // Modelo inexistente, ou modelo que não aceita imagem:
+                    // em vez de desistir, tenta o próximo da lista.
+                    if error.retryable || error.status == 404 || (error.status == 400 && hasMedia) {
+                        break
+                    }
                     throw error
                 } catch is CancellationError {
                     throw CancellationError()
@@ -218,6 +279,23 @@ enum GeminiClient {
             }
         }
         throw lastError
+    }
+
+    /// Extrai a mensagem real devolvida pela API, para diagnóstico.
+    private static func apiReason(from raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+
+        if let data = trimmed.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let error = object["error"] as? [String: Any] {
+            let status = (error["status"] as? String) ?? ""
+            let message = (error["message"] as? String) ?? ""
+            let joined = [status, message].filter { !$0.isEmpty }.joined(separator: " — ")
+            if !joined.isEmpty { return String(joined.prefix(300)) }
+        }
+
+        return String(trimmed.prefix(300))
     }
 
     private static func streamOnce(
@@ -246,11 +324,14 @@ enum GeminiClient {
             var detail = ""
             for try await line in bytes.lines {
                 detail += line
-                if detail.count > 400 { break }
+                if detail.count > 800 { break }
             }
             let retryable = [429, 500, 502, 503].contains(http.statusCode)
+            let base = friendly(http.statusCode)
+            let reason = apiReason(from: detail)
+            let message = reason.isEmpty ? base : "\(base)\n\nDetalhe da API (\(http.statusCode)): \(reason)"
             throw GeminiError(
-                message: friendly(http.statusCode),
+                message: message,
                 retryable: retryable,
                 status: http.statusCode
             )
@@ -487,7 +568,10 @@ enum GeminiClient {
             return chatFallbacks
         }
 
-        let blocked = ["image", "imagen", "tts", "transcribe", "lyria", "embed", "aqa", "veo", "robotics", "computer-use", "deep-research"]
+        let blocked = [
+            "image", "imagen", "tts", "transcribe", "lyria", "embed", "aqa", "veo",
+            "robotics", "computer-use", "deep-research", "live", "native-audio", "realtime"
+        ]
         var found: [String] = []
         for model in models {
             guard let name = model["name"] as? String else { continue }
@@ -495,11 +579,14 @@ enum GeminiClient {
             let lower = id.lowercased()
             if blocked.contains(where: { lower.contains($0) }) { continue }
             if !lower.contains("gemini") { continue }
+
+            let methods = (model["supportedGenerationMethods"] as? [String]) ?? []
+            if !methods.isEmpty && !methods.contains("generateContent") { continue }
+
             if !found.contains(id) { found.append(id) }
         }
 
         if found.isEmpty { return chatFallbacks }
-        found.sort()
-        return found
+        return preferredOrder(found)
     }
 }
