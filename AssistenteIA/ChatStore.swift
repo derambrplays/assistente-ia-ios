@@ -190,9 +190,14 @@ final class ChatStore: ObservableObject {
         }
 
         let history = messages.filter { $0.id != assistantID }
+        let voice = speakReply || voiceMode
+        let searchRequested = Self.looksLikeSearchRequest(text)
         var system = settings.composedSystem(location: settings.useLocation ? location.summary : nil)
-        if Self.looksLikeSearchRequest(text) {
+        if searchRequested {
             system += "\n\nO usuário pediu explicitamente para pesquisar na internet. Use a busca do Google agora e cite as fontes."
+        }
+        if voice {
+            system += "\n\nModo voz: responda em no máximo 2 frases curtas e diretas, sem listas, sem markdown e sem repetir a pergunta. Vá direto ao ponto."
         }
         let model = settings.model
         let temperature = settings.temperature
@@ -200,7 +205,7 @@ final class ChatStore: ObservableObject {
         isSending = true
         banner = nil
 
-        if speakReply || voiceMode {
+        if voice {
             beginSpeechPipeline()
         }
 
@@ -212,7 +217,8 @@ final class ChatStore: ObservableObject {
                     system: system,
                     model: model,
                     temperature: temperature,
-                    search: true,
+                    search: voice ? searchRequested : true,
+                    voice: voice,
                     onDelta: { delta in
                         self.appendDelta(assistantID, delta)
                     },
@@ -354,6 +360,9 @@ final class ChatStore: ObservableObject {
             let allowed = await speech.requestAuthorization()
             await MainActor.run {
                 if allowed {
+                    // Deixa microfone e conexão prontos antes da primeira fala.
+                    self.speech.warm()
+                    GeminiClient.warmUp()
                     self.listenAgain()
                 } else {
                     self.voiceMode = false
@@ -374,7 +383,7 @@ final class ChatStore: ObservableObject {
         sendTask?.cancel()
         sendTask = nil
         cancelSpeechPipeline()
-        speech.stop()
+        speech.shutdown()
         micLevel = 0
     }
 
@@ -394,7 +403,7 @@ final class ChatStore: ObservableObject {
             self?.banner = message
         }
 
-        speech.start(silence: 1.3)
+        speech.start(silence: 0.8)
     }
 
     private func handleHeard(_ text: String) {
@@ -402,7 +411,10 @@ final class ChatStore: ObservableObject {
         guard voiceMode else { return }
 
         guard !clean.isEmpty else {
-            listenAgain()
+            // Evita um laço apertado se o reconhecedor falhar em sequência.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                self?.listenAgain()
+            }
             return
         }
 
@@ -564,20 +576,31 @@ final class ChatStore: ObservableObject {
     /// Separa a resposta em frases para começar a falar o quanto antes.
     private func extractSpeechChunks(flush: Bool) -> [String] {
         var chunks: [String] = []
-        // A primeira frase é curta para a voz começar rápido; depois agrupamos
-        // mais texto por pedido, para não gastar cota à toa.
-        let minLength = speechChunkCount == 0 ? 24 : 170
-        let maxLength = 320
+        // O primeiro pedaço é bem curto (aceita até vírgula) para a voz começar
+        // quase junto com a resposta; depois agrupamos mais texto por pedido.
+        let firstOfTurn = speechChunkCount == 0
+        let minLength = firstOfTurn ? 14 : 150
 
         while true {
             let text = speechBuffer
             guard !text.isEmpty else { break }
 
+            let isFirst = firstOfTurn && chunks.isEmpty
+            let maxLength = isFirst ? 70 : 320
             var cut: String.Index?
 
             var index = text.startIndex
             while index < text.endIndex {
                 let character = text[index]
+
+                if isFirst && (character == "," || character == ";" || character == ":") {
+                    let next = text.index(after: index)
+                    if text.distance(from: text.startIndex, to: next) >= minLength {
+                        cut = next
+                        break
+                    }
+                }
+
                 if character == "." || character == "!" || character == "?" || character == "…" || character == "\n" {
                     let next = text.index(after: index)
                     if next == text.endIndex {

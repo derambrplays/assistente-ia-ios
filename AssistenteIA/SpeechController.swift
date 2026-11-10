@@ -3,6 +3,9 @@ import AVFoundation
 import Speech
 
 /// Ditado nativo do iPhone (Speech framework), com detecção de silêncio.
+///
+/// O motor de áudio fica ligado entre os turnos: assim a escuta recomeça
+/// quase instantaneamente, sem repetir a preparação do microfone a cada fala.
 final class SpeechController {
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "pt-BR"))
     private let engine = AVAudioEngine()
@@ -13,6 +16,7 @@ final class SpeechController {
     private var tapInstalled = false
     private var running = false
     private var lastText = ""
+    private var onDeviceBroken = false
 
     var onPartial: ((String) -> Void)?
     var onFinal: ((String) -> Void)?
@@ -37,67 +41,62 @@ final class SpeechController {
         return micOK
     }
 
-    func start(silence: TimeInterval = 1.5) {
+    /// Prepara o microfone antes do primeiro turno (ganha ~0,3 s na primeira fala).
+    func warm() {
+        guard !running else { return }
+        guard activateSession() else { return }
+        ensureTap()
+        _ = startEngine()
+    }
+
+    func start(silence: TimeInterval = 0.9, onDevice: Bool = true) {
         guard !running else { return }
         guard let recognizer = recognizer, recognizer.isAvailable else {
             onError?("O ditado do iPhone não está disponível agora. Verifique em Ajustes → Geral → Teclado → Ditado.")
             return
         }
+        guard activateSession() else {
+            onError?("Não consegui ligar o microfone.")
+            return
+        }
 
-        do {
-            let session = AVAudioSession.sharedInstance()
-            if session.category != .playAndRecord {
-                try session.setCategory(
-                    .playAndRecord,
-                    mode: .voiceChat,
-                    options: [.defaultToSpeaker, .allowBluetooth]
-                )
-            }
-            try session.setActive(true, options: [])
-        } catch {
+        ensureTap()
+        guard startEngine() else {
             onError?("Não consegui ligar o microfone.")
             return
         }
 
         let recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
         recognitionRequest.shouldReportPartialResults = true
+        recognitionRequest.taskHint = .dictation
+        // Reconhecimento no aparelho: sem ida e volta para o servidor.
+        let useOnDevice = onDevice && recognizer.supportsOnDeviceRecognition && !onDeviceBroken
+        if useOnDevice {
+            recognitionRequest.requiresOnDeviceRecognition = true
+        }
         request = recognitionRequest
         lastText = ""
         running = true
-
-        let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
-            guard let self = self else { return }
-            self.request?.append(buffer)
-            self.publishLevel(buffer)
-        }
-        tapInstalled = true
-
-        engine.prepare()
-        do {
-            try engine.start()
-        } catch {
-            running = false
-            cleanup()
-            onError?("Não consegui ligar o microfone.")
-            return
-        }
 
         task = recognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in
             guard let self = self else { return }
 
             if let result = result {
                 let text = result.bestTranscription.formattedString
-                self.lastText = text
-                DispatchQueue.main.async { self.onPartial?(text) }
-                self.scheduleSilence(silence)
+                if text != self.lastText {
+                    self.lastText = text
+                    DispatchQueue.main.async { self.onPartial?(text) }
+                    self.scheduleSilence(silence)
+                }
                 if result.isFinal {
                     self.finish(deliver: true)
                 }
             }
             if error != nil {
+                // Se o modo no aparelho falhar de cara, volta para o servidor.
+                if useOnDevice && self.lastText.isEmpty {
+                    self.onDeviceBroken = true
+                }
                 self.finish(deliver: true)
             }
         }
@@ -109,7 +108,64 @@ final class SpeechController {
         finish(deliver: false)
     }
 
+    /// Desliga o microfone e o motor (ao sair do modo de voz).
+    func shutdown() {
+        finish(deliver: false)
+
+        if engine.isRunning {
+            engine.stop()
+        }
+        if tapInstalled {
+            engine.inputNode.removeTap(onBus: 0)
+            tapInstalled = false
+        }
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
     // MARK: - Interno
+
+    private func activateSession() -> Bool {
+        do {
+            let session = AVAudioSession.sharedInstance()
+            if session.category != .playAndRecord {
+                try session.setCategory(
+                    .playAndRecord,
+                    mode: .voiceChat,
+                    options: [.defaultToSpeaker, .allowBluetooth]
+                )
+            }
+            try session.setActive(true, options: [])
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func ensureTap() {
+        guard !tapInstalled else { return }
+
+        let input = engine.inputNode
+        let format = input.outputFormat(forBus: 0)
+        guard format.sampleRate > 0 else { return }
+
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+            guard let self = self else { return }
+            self.request?.append(buffer)
+            self.publishLevel(buffer)
+        }
+        tapInstalled = true
+    }
+
+    private func startEngine() -> Bool {
+        if engine.isRunning { return true }
+        engine.prepare()
+        do {
+            try engine.start()
+            return true
+        } catch {
+            return false
+        }
+    }
 
     private func scheduleSilence(_ seconds: TimeInterval) {
         DispatchQueue.main.async {
@@ -146,7 +202,10 @@ final class SpeechController {
             self.silenceWork = nil
         }
 
-        cleanup()
+        request?.endAudio()
+        task?.cancel()
+        request = nil
+        task = nil
 
         let text = lastText.trimmingCharacters(in: .whitespacesAndNewlines)
         lastText = ""
@@ -157,19 +216,5 @@ final class SpeechController {
                 self.onFinal?(text)
             }
         }
-    }
-
-    private func cleanup() {
-        if engine.isRunning {
-            engine.stop()
-        }
-        if tapInstalled {
-            engine.inputNode.removeTap(onBus: 0)
-            tapInstalled = false
-        }
-        request?.endAudio()
-        task?.cancel()
-        request = nil
-        task = nil
     }
 }

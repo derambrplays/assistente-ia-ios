@@ -91,6 +91,23 @@ enum GeminiClient {
 
     static var hasKey: Bool { !apiKey.isEmpty }
 
+    /// Aquece a conexão e a lista de modelos enquanto o usuário abre o modo de
+    /// voz, para a primeira resposta não pagar DNS/TLS nem a listagem de modelos.
+    static func warmUp() {
+        let key = apiKey
+        guard !key.isEmpty else { return }
+
+        Task.detached(priority: .userInitiated) {
+            _ = await chatModels()
+
+            guard let url = URL(string: "\(apiBase)/models?pageSize=1") else { return }
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 10
+            applyHeaders(&request, key: key)
+            _ = try? await URLSession.shared.data(for: request)
+        }
+    }
+
     private static func friendly(_ code: Int) -> String {
         switch code {
         case 400: return "Requisição inválida. Verifique o modelo escolhido nas Configurações."
@@ -126,6 +143,21 @@ enum GeminiClient {
         searchLock.lock()
         searchUnsupported.insert(model)
         searchLock.unlock()
+    }
+
+    private static let thinkingLock = NSLock()
+    private static var thinkingUnsupported: Set<String> = []
+
+    private static func supportsThinkingOff(_ model: String) -> Bool {
+        thinkingLock.lock()
+        defer { thinkingLock.unlock() }
+        return !thinkingUnsupported.contains(model)
+    }
+
+    private static func markThinkingUnsupported(_ model: String) {
+        thinkingLock.lock()
+        thinkingUnsupported.insert(model)
+        thinkingLock.unlock()
     }
 
     // MARK: - Cota diária (cada modelo tem a própria cota no plano gratuito)
@@ -213,16 +245,23 @@ enum GeminiClient {
         contents: [[String: Any]],
         system: String,
         temperature: Double,
-        search: Bool
+        search: Bool,
+        thinking: Bool = false,
+        maxTokens: Int = 8192
     ) throws -> Data {
         let systemText = search ? system + searchInstruction : system
+        var config: [String: Any] = [
+            "temperature": max(0.0, min(2.0, temperature)),
+            "maxOutputTokens": maxTokens
+        ]
+        if thinking {
+            // Modo voz: sem "pensar" antes de responder (muito mais rápido).
+            config["thinkingConfig"] = ["thinkingBudget": 0]
+        }
         var body: [String: Any] = [
             "contents": contents,
             "systemInstruction": ["parts": [["text": systemText]]],
-            "generationConfig": [
-                "temperature": max(0.0, min(2.0, temperature)),
-                "maxOutputTokens": 8192
-            ]
+            "generationConfig": config
         ]
         if search {
             body["tools"] = [["google_search": [String: Any]()]]
@@ -236,6 +275,7 @@ enum GeminiClient {
         model: String,
         temperature: Double,
         search: Bool = true,
+        voice: Bool = false,
         onDelta: @escaping (String) -> Void,
         onSources: (([WebSource]) -> Void)? = nil
     ) async throws {
@@ -256,8 +296,9 @@ enum GeminiClient {
         }
         contents.reverse()
 
-        if contents.count > 40 {
-            contents = Array(contents.suffix(40))
+        let maxContents = voice ? 14 : 40
+        if contents.count > maxContents {
+            contents = Array(contents.suffix(maxContents))
         }
         while let first = contents.first, (first["role"] as? String) == "model" {
             contents.removeFirst()
@@ -293,6 +334,7 @@ enum GeminiClient {
         var lastError = GeminiError(message: "O Gemini não respondeu. Tente de novo.")
         for candidate in candidates {
             var tryingSearch = search && supportsSearch(candidate)
+            var tryingThinking = voice && supportsThinkingOff(candidate)
             while true {
                 var emitted = false
                 do {
@@ -300,7 +342,9 @@ enum GeminiClient {
                         contents: contents,
                         system: system,
                         temperature: temperature,
-                        search: tryingSearch
+                        search: tryingSearch,
+                        thinking: tryingThinking,
+                        maxTokens: voice ? 700 : 8192
                     )
                     try await streamOnce(
                         model: candidate,
@@ -315,6 +359,13 @@ enum GeminiClient {
                     return
                 } catch let error as GeminiError {
                     if emitted { throw error }
+                    // Modelo que não aceita responder sem "pensar": tenta de novo
+                    // com o padrão antes de trocar de modelo.
+                    if tryingThinking && error.status == 400 {
+                        markThinkingUnsupported(candidate)
+                        tryingThinking = false
+                        continue
+                    }
                     // Alguns modelos não aceitam a ferramenta de busca.
                     // Tenta o mesmo modelo sem ela antes de trocar de modelo.
                     if tryingSearch && error.status == 400 {
@@ -465,6 +516,43 @@ enum GeminiClient {
 
     // MARK: - Voz (Gemini TTS)
 
+    private static let ttsLock = NSLock()
+    private static var ttsPreferred: String?
+    private static var ttsBroken: Set<String> = []
+
+    /// Lembra qual modelo de voz funcionou para não testar os que falham a cada frase.
+    private static func ttsOrder() -> [String] {
+        ttsLock.lock()
+        let preferred = ttsPreferred
+        let broken = ttsBroken
+        ttsLock.unlock()
+
+        var order: [String] = []
+        if let preferred = preferred, ttsModels.contains(preferred) {
+            order.append(preferred)
+        }
+        for model in ttsModels where model != preferred && !broken.contains(model) {
+            order.append(model)
+        }
+        return order
+    }
+
+    private static func markTTSWorking(_ model: String) {
+        ttsLock.lock()
+        ttsPreferred = model
+        ttsBroken.remove(model)
+        ttsLock.unlock()
+    }
+
+    private static func markTTSBroken(_ model: String) {
+        ttsLock.lock()
+        ttsBroken.insert(model)
+        if ttsPreferred == model {
+            ttsPreferred = nil
+        }
+        ttsLock.unlock()
+    }
+
     static func speak(text: String, voice: String) async throws -> Data {
         let key = apiKey
         guard !key.isEmpty else {
@@ -492,11 +580,11 @@ enum GeminiClient {
 
         var lastError = GeminiError(message: "Não consegui gerar a voz.", retryable: true)
 
-        for model in ttsModels {
+        for model in ttsOrder() {
             guard let url = URL(string: "\(apiBase)/models/\(model):generateContent") else { continue }
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
-            request.timeoutInterval = 90
+            request.timeoutInterval = 20
             applyHeaders(&request, key: key)
             request.httpBody = bodyData
 
@@ -504,6 +592,9 @@ enum GeminiClient {
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse else { continue }
                 guard http.statusCode == 200 else {
+                    if http.statusCode == 404 || http.statusCode == 400 {
+                        markTTSBroken(model)
+                    }
                     lastError = GeminiError(message: friendly(http.statusCode), retryable: true)
                     continue
                 }
@@ -514,6 +605,8 @@ enum GeminiClient {
                     lastError = GeminiError(message: "O Google não devolveu o áudio.", retryable: true)
                     continue
                 }
+                markTTSWorking(model)
+
                 for part in parts {
                     guard let inline = part["inlineData"] as? [String: Any],
                           let base64 = inline["data"] as? String,

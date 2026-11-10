@@ -104,7 +104,7 @@ final class CameraProvider: NSObject, ObservableObject, AVCaptureVideoDataOutput
     }
 
     /// Converte o último quadro em JPEG (leve) para mandar ao Gemini.
-    func latestJPEG(maxSide: CGFloat = 1024, quality: CGFloat = 0.7) -> Data? {
+    func latestJPEG(maxSide: CGFloat = 768, quality: CGFloat = 0.62) -> Data? {
         bufferLock.lock()
         let buffer = lastBuffer
         bufferLock.unlock()
