@@ -8,6 +8,7 @@ struct SettingsView: View {
     @State private var keyDraft = ""
     @State private var showKey = false
     @State private var newMemory = ""
+    @State private var showWhatsNew = false
 
     private var models: [String] {
         var list = store.availableModels
@@ -28,6 +29,7 @@ struct SettingsView: View {
                     locationCard
                     personalityCard
                     voiceCard
+                    whatsNewCard
                     aboutCard
                 }
                 .padding(16)
@@ -49,6 +51,10 @@ struct SettingsView: View {
             }
         }
         .onDisappear { store.save() }
+        .sheet(isPresented: $showWhatsNew) {
+            WhatsNewView()
+                .environmentObject(store)
+        }
     }
 
     // MARK: - Chave
@@ -444,6 +450,50 @@ struct SettingsView: View {
         .glassCard()
     }
 
+    // MARK: - Novidades
+
+    private var whatsNewCard: some View {
+        Button {
+            showWhatsNew = true
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [Theme.accent, Theme.accent2],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 38, height: 38)
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Novidades")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white)
+                    Text("Veja o que mudou na versão \(AppInfo.version)")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textDim)
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.textFaint)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .glassCard(radius: 24, strength: 0.8)
+        }
+        .buttonStyle(PressableStyle())
+    }
+
     // MARK: - Sobre
 
     private var aboutCard: some View {
@@ -452,7 +502,7 @@ struct SettingsView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.white)
 
-            Text("Joguim AI 2.0 — roda inteiro no iPhone, sem computador.")
+            Text("Joguim AI \(AppInfo.version) (\(AppInfo.build)) — roda inteiro no iPhone, sem computador.")
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.textDim)
 

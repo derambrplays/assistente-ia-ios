@@ -4,6 +4,8 @@ struct RootView: View {
     @EnvironmentObject private var store: ChatStore
     @State private var showSettings = false
     @State private var showConversations = false
+    @State private var showWhatsNew = false
+    @AppStorage("lastSeenBuild") private var lastSeenBuild = ""
 
     private var onboardingBinding: Binding<Bool> {
         Binding(
@@ -15,6 +17,17 @@ struct RootView: View {
                 }
             }
         )
+    }
+
+    /// Mostra a tela de novidades uma vez por atualização instalada.
+    private func checkWhatsNew() {
+        guard store.hasKey, store.settings.onboardingDone else { return }
+        guard lastSeenBuild != AppInfo.buildKey else { return }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+            guard lastSeenBuild != AppInfo.buildKey else { return }
+            showWhatsNew = true
+        }
     }
 
     var body: some View {
@@ -38,6 +51,13 @@ struct RootView: View {
             ConversationsView()
                 .environmentObject(store)
         }
+        .sheet(isPresented: $showWhatsNew, onDismiss: { lastSeenBuild = AppInfo.buildKey }) {
+            WhatsNewView()
+                .environmentObject(store)
+        }
+        .onAppear { checkWhatsNew() }
+        .onChange(of: store.hasKey) { _ in checkWhatsNew() }
+        .onChange(of: store.settings.onboardingDone) { _ in checkWhatsNew() }
         .fullScreenCover(isPresented: $store.voiceMode) {
             VoiceView()
                 .environmentObject(store)
