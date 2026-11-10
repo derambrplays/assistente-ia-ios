@@ -67,7 +67,7 @@ struct MessageRow: View {
             TypingIndicator()
                 .padding(.horizontal, 16)
                 .padding(.vertical, 15)
-                .glassCard(radius: 20, strength: 0.75)
+                .glassCard(radius: 26, strength: 0.75)
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(message.attachments) { attachment in
@@ -84,9 +84,9 @@ struct MessageRow: View {
             .padding(.horizontal, message.attachments.isEmpty ? 14 : 8)
             .padding(.vertical, message.attachments.isEmpty ? 11 : 8)
             .background(bubbleBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                RoundedRectangle(cornerRadius: 26, style: .continuous)
                     .strokeBorder(bubbleBorder, lineWidth: 1)
             )
         }
@@ -156,9 +156,9 @@ private struct AttachmentPreview: View {
                 .scaledToFill()
                 .frame(width: 200, height: 150)
                 .clipped()
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .strokeBorder(Color.white.opacity(0.16))
                 )
         } else {
@@ -168,7 +168,7 @@ private struct AttachmentPreview: View {
                     .foregroundStyle(Theme.accent2)
                     .frame(width: 30, height: 30)
                     .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .fill(Color.white.opacity(0.08))
                     )
 
@@ -184,7 +184,7 @@ private struct AttachmentPreview: View {
             }
             .padding(6)
             .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(Color.white.opacity(0.06))
             )
         }

@@ -10,6 +10,7 @@ struct Composer: View {
     var onSend: () -> Void
     var onStop: () -> Void
     var onVoice: () -> Void
+    var onMusic: () -> Void
     var onError: (String) -> Void
 
     @State private var photoItems: [PhotosPickerItem] = []
@@ -53,6 +54,12 @@ struct Composer: View {
                     } label: {
                         Label("Arquivo", systemImage: "folder")
                     }
+                    Button {
+                        focused = false
+                        onMusic()
+                    } label: {
+                        Label("Identificar música", systemImage: "music.note")
+                    }
                 } label: {
                     Group {
                         if loading {
@@ -81,11 +88,11 @@ struct Composer: View {
                     .padding(.vertical, 9)
                     .frame(maxWidth: .infinity, minHeight: 38, alignment: .leading)
                     .background(
-                        RoundedRectangle(cornerRadius: 17, style: .continuous)
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
                             .fill(Color.white.opacity(0.06))
                     )
                     .overlay(
-                        RoundedRectangle(cornerRadius: 17, style: .continuous)
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
                             .strokeBorder(Theme.hairline)
                     )
 
@@ -125,7 +132,7 @@ struct Composer: View {
         }
         .padding(8)
         .frame(maxWidth: .infinity)
-        .glassCard(radius: 23, strength: 0.9)
+        .glassCard(radius: 30, strength: 0.9)
         .padding(.horizontal, 12)
         .padding(.top, 6)
         .padding(.bottom, 6)

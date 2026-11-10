@@ -5,7 +5,7 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>pt_BR</string>
     <key>CFBundleDisplayName</key>
-    <string>Assistente</string>
+    <string>Joguim AI</string>
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
@@ -17,9 +17,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.5</string>
+    <string>2.0</string>
     <key>CFBundleVersion</key>
-    <string>6</string>
+    <string>7</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
@@ -30,6 +30,8 @@
     <string>Para anexar fotos às suas mensagens.</string>
     <key>NSCameraUsageDescription</key>
     <string>Para tirar fotos e enviar ao assistente.</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>Para o Joguim dizer qual escola, mercado ou lugar fica mais perto de você.</string>
     <key>UILaunchStoryboardName</key>
     <string>LaunchScreen</string>
     <key>UIRequiresFullScreen</key>

@@ -65,16 +65,98 @@ struct Conversation: Identifiable, Codable, Equatable {
     var updatedAt: Date = Date()
 }
 
+/// O que o Joguim sabe sobre a pessoa (preenchido na primeira conversa).
+struct UserProfile: Codable, Equatable {
+    var name: String = ""
+    var age: String = ""
+    var work: String = ""
+    var city: String = ""
+    var likes: String = ""
+    var notes: String = ""
+
+    var isEmpty: Bool {
+        [name, age, work, city, likes, notes]
+            .allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    var promptLines: [String] {
+        var lines: [String] = []
+        if !name.isEmpty { lines.append("Nome: \(name)") }
+        if !age.isEmpty { lines.append("Idade: \(age)") }
+        if !work.isEmpty { lines.append("O que faz / trabalha: \(work)") }
+        if !city.isEmpty { lines.append("Cidade: \(city)") }
+        if !likes.isEmpty { lines.append("Gostos e interesses: \(likes)") }
+        if !notes.isEmpty { lines.append("Outras informações: \(notes)") }
+        return lines
+    }
+}
+
 struct AppSettings: Codable, Equatable {
-    var model: String = "gemini-3.5-flash-lite"
+    var model: String = "gemini-flash-lite-latest"
     var temperature: Double = 0.8
     var systemPrompt: String = AppSettings.defaultSystem
     var ttsVoice: String = "Kore"
     var naturalVoice: Bool = true
 
+    var profile = UserProfile()
+    var onboardingDone = false
+    var memories: [String] = []
+    var autoMemory: Bool = true
+    var useLocation: Bool = false
+
     static let defaultSystem = """
-    Você é um assistente pessoal inteligente, prestativo e direto. Responda sempre em português do Brasil, a menos que o usuário peça outro idioma. Seja claro e objetivo; use listas e exemplos quando ajudar. Se não souber algo, diga que não sabe em vez de inventar. Ao escrever código, use blocos de código com a linguagem indicada.
+    Você é o Joguim AI, um assistente pessoal inteligente, caloroso e direto. Responda sempre em português do Brasil, a menos que o usuário peça outro idioma. Seja claro e objetivo; use listas curtas quando ajudar. Se não souber algo, diga que não sabe em vez de inventar. Ao escrever código, use blocos de código com a linguagem indicada. Use o que você sabe sobre o usuário e a memória para personalizar as respostas, sem repetir essas informações sem necessidade.
     """
+
+    init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case model, temperature, systemPrompt, ttsVoice, naturalVoice
+        case profile, onboardingDone, memories, autoMemory, useLocation
+    }
+
+    // Tolerante: configurações salvas por versões antigas continuam válidas.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        model = try container.decodeIfPresent(String.self, forKey: .model) ?? "gemini-flash-lite-latest"
+        temperature = try container.decodeIfPresent(Double.self, forKey: .temperature) ?? 0.8
+        systemPrompt = try container.decodeIfPresent(String.self, forKey: .systemPrompt) ?? AppSettings.defaultSystem
+        ttsVoice = try container.decodeIfPresent(String.self, forKey: .ttsVoice) ?? "Kore"
+        naturalVoice = try container.decodeIfPresent(Bool.self, forKey: .naturalVoice) ?? true
+        profile = try container.decodeIfPresent(UserProfile.self, forKey: .profile) ?? UserProfile()
+        onboardingDone = try container.decodeIfPresent(Bool.self, forKey: .onboardingDone) ?? false
+        memories = try container.decodeIfPresent([String].self, forKey: .memories) ?? []
+        autoMemory = try container.decodeIfPresent(Bool.self, forKey: .autoMemory) ?? true
+        useLocation = try container.decodeIfPresent(Bool.self, forKey: .useLocation) ?? false
+    }
+
+    /// Junta personalidade + perfil + memória + localização num único texto de sistema.
+    func composedSystem(location: String?) -> String {
+        var blocks: [String] = [systemPrompt]
+
+        let lines = profile.promptLines
+        if !lines.isEmpty {
+            blocks.append("Sobre o usuário:\n" + lines.joined(separator: "\n"))
+        }
+
+        let cleanMemories = memories
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if !cleanMemories.isEmpty {
+            let recent = cleanMemories.suffix(50)
+            blocks.append("Memória (fatos importantes que você deve lembrar):\n" + recent.map { "- \($0)" }.joined(separator: "\n"))
+        }
+
+        if let location, !location.isEmpty {
+            blocks.append("Localização atual do usuário: \(location). Quando ele perguntar por lugares próximos (escola, mercado, farmácia, restaurante), use a busca do Google com essa localização para responder com nomes reais e a distância aproximada.")
+        }
+
+        if !profile.name.isEmpty {
+            blocks.append("Trate o usuário pelo nome (\(profile.name)) de vez em quando, sem exagero.")
+        }
+
+        return blocks.joined(separator: "\n\n")
+    }
 }
 
 struct PersistedState: Codable {

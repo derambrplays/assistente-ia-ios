@@ -57,7 +57,7 @@ struct AuroraBackground: View {
 }
 
 struct GlassBackground: ViewModifier {
-    var radius: CGFloat = 24
+    var radius: CGFloat = 30
     var strength: Double = 1.0
 
     func body(content: Content) -> some View {
@@ -83,7 +83,7 @@ struct GlassBackground: ViewModifier {
 }
 
 extension View {
-    func glassCard(radius: CGFloat = 24, strength: Double = 1.0) -> some View {
+    func glassCard(radius: CGFloat = 30, strength: Double = 1.0) -> some View {
         modifier(GlassBackground(radius: radius, strength: strength))
     }
 }

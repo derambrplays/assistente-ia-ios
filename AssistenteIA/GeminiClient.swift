@@ -614,6 +614,119 @@ enum GeminiClient {
         throw GeminiError(message: "Não consegui entender o áudio. Tente falar de novo.")
     }
 
+    // MARK: - Memória automática
+
+    static func extractMemories(transcript: String, known: [String]) async throws -> [String] {
+        guard !apiKey.isEmpty else { return [] }
+
+        let knownText = known.suffix(30).map { "- \($0)" }.joined(separator: "\n")
+        let prompt = """
+        Leia a conversa abaixo e liste apenas fatos duradouros e úteis sobre o usuário \
+        (gostos, rotina, trabalho, estudos, família, planos, preferências, restrições). \
+        Não inclua detalhes passageiros nem o que o assistente disse. \
+        Ignore o que já está na memória atual. \
+        Responda SOMENTE com um array JSON de frases curtas em português, no máximo 3 itens. \
+        Se não houver nada novo e importante, responda [].
+
+        Memória atual:
+        \(knownText.isEmpty ? "(vazia)" : knownText)
+
+        Conversa:
+        \(transcript)
+        """
+
+        let text = try await quickText(prompt: prompt, maxTokens: 400, temperature: 0.2)
+        return parseStringArray(text)
+    }
+
+    private static func parseStringArray(_ raw: String) -> [String] {
+        var clean = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        clean = clean.replacingOccurrences(of: "```json", with: "")
+        clean = clean.replacingOccurrences(of: "```", with: "")
+        clean = clean.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let start = clean.firstIndex(of: "["),
+           let end = clean.lastIndex(of: "]"),
+           start < end {
+            clean = String(clean[start...end])
+        }
+
+        guard let data = clean.data(using: .utf8),
+              let array = try? JSONSerialization.jsonObject(with: data) as? [String] else {
+            return []
+        }
+
+        return array
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// Pedido curto sem streaming, para tarefas internas (memória).
+    static func quickText(prompt: String, maxTokens: Int = 400, temperature: Double = 0.3) async throws -> String {
+        let key = apiKey
+        guard !key.isEmpty else {
+            throw GeminiError(message: "Configure sua chave do Gemini.")
+        }
+
+        let body: [String: Any] = [
+            "contents": [["role": "user", "parts": [["text": prompt]]]],
+            "generationConfig": [
+                "temperature": max(0.0, min(2.0, temperature)),
+                "maxOutputTokens": maxTokens
+            ]
+        ]
+        let bodyData = try JSONSerialization.data(withJSONObject: body)
+
+        var models = Array((await chatModels()).prefix(3))
+        if !models.contains("gemini-flash-lite-latest") {
+            models.append("gemini-flash-lite-latest")
+        }
+
+        var lastError = GeminiError(message: "O Gemini não respondeu.", retryable: true)
+
+        for model in models where !isExhausted(model) {
+            guard let url = URL(string: "\(apiBase)/models/\(model):generateContent") else { continue }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 30
+            applyHeaders(&request, key: key)
+            request.httpBody = bodyData
+
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else { continue }
+                guard http.statusCode == 200 else {
+                    if http.statusCode == 429 { markExhausted(model) }
+                    lastError = GeminiError(
+                        message: friendly(http.statusCode),
+                        retryable: true,
+                        status: http.statusCode
+                    )
+                    continue
+                }
+
+                guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let candidates = object["candidates"] as? [[String: Any]],
+                      let content = candidates.first?["content"] as? [String: Any],
+                      let parts = content["parts"] as? [[String: Any]] else {
+                    continue
+                }
+
+                var text = ""
+                for part in parts {
+                    if let piece = part["text"] as? String {
+                        text += piece
+                    }
+                }
+                if !text.isEmpty { return text }
+            } catch {
+                lastError = GeminiError(message: error.localizedDescription, retryable: true)
+            }
+        }
+
+        throw lastError
+    }
+
     // MARK: - Modelos disponíveis
 
     static func listModels() async throws -> [String] {

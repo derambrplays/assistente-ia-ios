@@ -5,6 +5,18 @@ struct RootView: View {
     @State private var showSettings = false
     @State private var showConversations = false
 
+    private var onboardingBinding: Binding<Bool> {
+        Binding(
+            get: { store.hasKey && !store.settings.onboardingDone },
+            set: { showing in
+                if !showing {
+                    store.settings.onboardingDone = true
+                    store.save()
+                }
+            }
+        )
+    }
+
     var body: some View {
         ZStack {
             AuroraBackground()
@@ -28,6 +40,10 @@ struct RootView: View {
         }
         .fullScreenCover(isPresented: $store.voiceMode) {
             VoiceView()
+                .environmentObject(store)
+        }
+        .fullScreenCover(isPresented: onboardingBinding) {
+            OnboardingView()
                 .environmentObject(store)
         }
         .overlay(alignment: .top) {

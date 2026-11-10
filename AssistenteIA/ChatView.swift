@@ -11,9 +11,9 @@ struct ChatView: View {
 
     private let suggestions = [
         "Pesquise na internet as notícias de hoje",
+        "Qual mercado ou escola fica mais perto de mim?",
         "Explique algo complicado de um jeito simples",
-        "Resuma o arquivo que eu anexar",
-        "Monte um plano para a minha semana"
+        "Resuma o arquivo que eu anexar"
     ]
 
     var body: some View {
@@ -30,6 +30,7 @@ struct ChatView: View {
                 onSend: send,
                 onStop: { store.stop() },
                 onVoice: { store.startVoiceMode() },
+                onMusic: { store.identifyMusic() },
                 onError: { store.banner = $0 }
             )
         }
@@ -130,7 +131,7 @@ struct ChatView: View {
                 SparkleMark(size: 46)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Assistente IA")
+                    Text("Joguim AI")
                         .font(.system(size: 25, weight: .bold))
                         .foregroundStyle(.white)
                     Text("Seu assistente pessoal, por texto, voz e arquivos.")
@@ -159,7 +160,7 @@ struct ChatView: View {
                     .padding(.horizontal, 15)
                     .padding(.vertical, 14)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .glassCard(radius: 18, strength: 0.75)
+                    .glassCard(radius: 24, strength: 0.75)
                 }
                 .buttonStyle(PressableStyle())
             }

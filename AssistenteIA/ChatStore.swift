@@ -24,10 +24,14 @@ final class ChatStore: ObservableObject {
 
     let speech = SpeechController()
     let player = AudioPlayer()
+    let location = LocationProvider()
+    let musicRecorder = MusicRecorder()
 
     private var sendTask: Task<Void, Never>?
     private var lastSpoken = ""
     private var speechGeneration = 0
+    private var turnsSinceMemory = 0
+    private var cancellables = Set<AnyCancellable>()
     private let storageKey = "assistente.ios.v1"
 
     // Fala em fluxo: a primeira frase é falada enquanto o resto é gerado.
@@ -47,6 +51,25 @@ final class ChatStore: ObservableObject {
         speech.onLevel = { [weak self] level in
             self?.micLevel = level
         }
+
+        // A localização muda por fora (CoreLocation); avisa as telas que observam
+        // o store para o endereço aparecer nos Ajustes sem reabrir a tela.
+        location.objectWillChange
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
+
+        // Toda vez que abre o app, começa em uma conversa nova.
+        let fresh = Conversation()
+        conversations.removeAll { $0.messages.isEmpty }
+        conversations.insert(fresh, at: 0)
+        activeID = fresh.id
+        save()
+
+        if settings.useLocation {
+            location.request()
+        }
     }
 
     // MARK: - Leitura
@@ -62,7 +85,7 @@ final class ChatStore: ObservableObject {
     var activeTitle: String {
         guard let id = activeID,
               let conversation = conversations.first(where: { $0.id == id }) else {
-            return "Assistente"
+            return "Joguim AI"
         }
         return conversation.title
     }
@@ -148,7 +171,7 @@ final class ChatStore: ObservableObject {
         }
 
         let history = messages.filter { $0.id != assistantID }
-        var system = settings.systemPrompt
+        var system = settings.composedSystem(location: settings.useLocation ? location.summary : nil)
         if Self.looksLikeSearchRequest(text) {
             system += "\n\nO usuário pediu explicitamente para pesquisar na internet. Use a busca do Google agora e cite as fontes."
         }
@@ -246,6 +269,7 @@ final class ChatStore: ObservableObject {
             }
 
             self.save()
+            self.maybeExtractMemory()
 
             if interrupted {
                 self.cancelSpeechPipeline()
@@ -588,23 +612,52 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    private func startBargeIn(after delay: TimeInterval = 0.6) {
+    private func startBargeIn(after delay: TimeInterval = 0.35, attempt: Int = 0) {
         guard voiceMode else { return }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self = self, self.voiceMode, self.player.isPlaying else { return }
+            guard let self = self, self.voiceMode else { return }
 
-            self.speech.onPartial = { [weak self] text in
-                guard let self = self else { return }
-                let heard = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard heard.split(separator: " ").count >= 2 else { return }
-                if self.overlaps(heard, self.lastSpoken) { return }
-                self.interrupt()
+            let active = self.player.isPlaying || self.speechStreaming || self.isSending
+            guard active else {
+                // Se a resposta terminou e já voltamos a ouvir normalmente, não mexe.
+                if self.voiceState == .listening { return }
+                // A fala pode ainda estar sendo gerada; tenta de novo por alguns segundos.
+                if attempt < 12 {
+                    self.startBargeIn(after: 0.3, attempt: attempt + 1)
+                }
+                return
             }
-            self.speech.onFinal = { _ in }
-            self.speech.onError = { _ in }
 
-            self.speech.start(silence: 30)
+            self.beginBargeInListening()
+        }
+    }
+
+    private func beginBargeInListening() {
+        speech.onPartial = { [weak self] text in
+            guard let self = self else { return }
+            let heard = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard heard.split(separator: " ").count >= 2 else { return }
+            if self.overlaps(heard, self.lastSpoken) { return }
+            self.interrupt()
+        }
+        speech.onFinal = { [weak self] text in
+            guard let self = self else { return }
+            let heard = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard heard.split(separator: " ").count >= 2 else { return }
+            if self.overlaps(heard, self.lastSpoken) { return }
+            self.interrupt()
+        }
+        speech.onError = { _ in }
+
+        speech.start(silence: 30)
+    }
+
+    /// Interrompe pelo toque na tela (funciona mesmo se o microfone não pegar).
+    func interruptFromUser() {
+        guard voiceMode else { return }
+        if player.isPlaying || speechStreaming || isSending {
+            interrupt()
         }
     }
 
@@ -613,6 +666,7 @@ final class ChatStore: ObservableObject {
         sendTask = nil
         cancelSpeechPipeline()
         speech.stop()
+        player.stop()
         liveTranscript = ""
         voiceState = .listening
         listenAgain()
@@ -633,6 +687,97 @@ final class ChatStore: ObservableObject {
 
         let common = firstWords.intersection(secondWords).count
         return Double(common) / Double(firstWords.count) >= 0.7
+    }
+
+    // MARK: - Memória
+
+    private func maybeExtractMemory() {
+        guard settings.autoMemory else { return }
+
+        turnsSinceMemory += 1
+        guard turnsSinceMemory >= 4 else { return }
+        turnsSinceMemory = 0
+
+        let recent = messages
+            .suffix(12)
+            .filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map { "\($0.role == .user ? "Usuário" : "Joguim"): \($0.text.prefix(700))" }
+            .joined(separator: "\n")
+        guard !recent.isEmpty else { return }
+
+        let known = settings.memories
+        Task { [weak self] in
+            let facts = (try? await GeminiClient.extractMemories(transcript: recent, known: known)) ?? []
+            guard !facts.isEmpty else { return }
+            await MainActor.run {
+                guard let self = self else { return }
+                for fact in facts {
+                    let clean = fact.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard clean.count > 3 else { continue }
+                    let already = self.settings.memories.contains {
+                        $0.caseInsensitiveCompare(clean) == .orderedSame
+                    }
+                    if !already {
+                        self.settings.memories.append(clean)
+                    }
+                }
+                if self.settings.memories.count > 60 {
+                    self.settings.memories = Array(self.settings.memories.suffix(60))
+                }
+                self.save()
+            }
+        }
+    }
+
+    func addMemory(_ raw: String) {
+        let clean = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return }
+        guard !settings.memories.contains(where: { $0.caseInsensitiveCompare(clean) == .orderedSame }) else { return }
+        settings.memories.append(clean)
+        save()
+    }
+
+    func removeMemory(_ text: String) {
+        settings.memories.removeAll { $0 == text }
+        save()
+    }
+
+    // MARK: - Música
+
+    func identifyMusic() {
+        guard !musicRecorder.isRecording else { return }
+        guard musicRecorder.start(seconds: 9) else {
+            banner = "Não consegui ligar o microfone para ouvir a música."
+            return
+        }
+
+        banner = "Ouvindo… toque ou cante a música agora."
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 9.2) { [weak self] in
+            self?.finishMusic()
+        }
+    }
+
+    private func finishMusic() {
+        guard let result = musicRecorder.finish() else {
+            banner = "Não consegui ouvir nada. Tente de novo mais perto do som."
+            return
+        }
+
+        guard let attachment = AttachmentStore.make(
+            name: "musica.wav",
+            mimeType: result.mimeType,
+            data: result.data
+        ) else {
+            banner = "A gravação ficou grande demais."
+            return
+        }
+
+        banner = nil
+        send(
+            "Identifique a música deste áudio. Se for alguém cantando a letra, pesquise o trecho na internet. Responda com o nome da música, o artista e o ano, e diga em qual trecho você se baseou.",
+            attachments: [attachment]
+        )
     }
 
     // MARK: - Persistência

@@ -14,10 +14,10 @@ struct VoiceView: View {
 
     private var hint: String {
         switch store.voiceState {
-        case .idle: return "Toque para começar"
+        case .idle: return "Toque nas barras para começar"
         case .listening: return "Fale normalmente. Eu paro quando você ficar em silêncio."
         case .thinking: return "Só um instante."
-        case .speaking: return "Você pode falar por cima para me interromper."
+        case .speaking: return "Fale por cima ou toque nas barras para me interromper."
         }
     }
 
@@ -28,29 +28,35 @@ struct VoiceView: View {
             VStack(spacing: 0) {
                 header
 
-                Spacer(minLength: 12)
+                Spacer(minLength: 8)
 
-                orb
-                    .frame(height: 300)
+                VoiceBars(level: store.micLevel, state: store.voiceState)
+                    .frame(height: 250)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if store.voiceState == .speaking {
+                            store.interruptFromUser()
+                        }
+                    }
 
                 Text(status)
                     .font(.system(size: 22, weight: .semibold))
                     .foregroundStyle(.white)
-                    .padding(.top, 18)
+                    .padding(.top, 8)
 
                 Text(hint)
                     .font(.system(size: 13.5))
                     .multilineTextAlignment(.center)
                     .foregroundStyle(Theme.textDim)
-                    .padding(.horizontal, 40)
-                    .padding(.top, 8)
+                    .padding(.horizontal, 36)
+                    .padding(.top, 6)
 
                 transcript
 
-                Spacer(minLength: 12)
+                Spacer(minLength: 10)
 
-                endButton
-                    .padding(.bottom, 18)
+                controls
+                    .padding(.bottom, 20)
             }
             .padding(.horizontal, 20)
         }
@@ -61,7 +67,7 @@ struct VoiceView: View {
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Modo voz")
+                Text("Joguim AI")
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.white)
                 Text("Conversa por voz, tudo no iPhone")
@@ -81,84 +87,6 @@ struct VoiceView: View {
         .padding(.top, 8)
     }
 
-    // MARK: - Orbe
-
-    private var orb: some View {
-        let level = max(0.08, min(1.0, store.micLevel))
-        let speaking = store.voiceState == .speaking
-        let thinking = store.voiceState == .thinking
-
-        return ZStack {
-            ForEach(0..<3, id: \.self) { ring in
-                Circle()
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                Theme.accent.opacity(0.55 - Double(ring) * 0.13),
-                                Theme.accent2.opacity(0.35 - Double(ring) * 0.09)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1.2
-                    )
-                    .frame(width: 200 + CGFloat(ring) * 34, height: 200 + CGFloat(ring) * 34)
-                    .scaleEffect(thinking ? 1.06 : 1 + (speaking ? 0.03 : level * 0.06 * CGFloat(ring + 1)))
-                    .opacity(thinking ? 0.85 : 1)
-                    .animation(
-                        thinking
-                            ? .easeInOut(duration: 1.1).repeatForever(autoreverses: true)
-                            : .easeOut(duration: 0.18),
-                        value: thinking ? 1 : level
-                    )
-            }
-
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [
-                            Color.white.opacity(0.34),
-                            Theme.accent.opacity(0.92),
-                            Theme.accent.opacity(0.42)
-                        ],
-                        center: .topLeading,
-                        startRadius: 6,
-                        endRadius: 150
-                    )
-                )
-                .frame(width: 176, height: 176)
-                .overlay(
-                    Circle()
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [Color.white.opacity(0.6), Color.white.opacity(0.05)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1.2
-                        )
-                )
-                .shadow(color: Theme.accent.opacity(0.55), radius: 44, x: 0, y: 22)
-                .scaleEffect(speaking ? 1.04 : 1 + level * 0.10)
-                .animation(.easeOut(duration: 0.16), value: level)
-
-            Image(systemName: iconName)
-                .font(.system(size: 54, weight: .semibold))
-                .foregroundStyle(.white)
-                .shadow(color: Color.black.opacity(0.22), radius: 8, x: 0, y: 4)
-                .opacity(speaking ? 0.92 : 1)
-        }
-    }
-
-    private var iconName: String {
-        switch store.voiceState {
-        case .listening: return "waveform"
-        case .thinking: return "sparkles"
-        case .speaking: return "speaker.wave.2.fill"
-        case .idle: return "mic.fill"
-        }
-    }
-
     // MARK: - Transcrição
 
     @ViewBuilder
@@ -172,36 +100,114 @@ struct VoiceView: View {
                     .foregroundStyle(.white)
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(14)
+                    .padding(16)
             }
             .frame(maxHeight: 130)
-            .glassCard(radius: 20, strength: 0.8)
-            .padding(.top, 22)
+            .glassCard(radius: 26, strength: 0.8)
+            .padding(.top, 18)
         }
     }
 
-    // MARK: - Encerrar
+    // MARK: - Controles
 
-    private var endButton: some View {
-        Button {
-            store.stopVoiceMode()
-        } label: {
-            HStack(spacing: 9) {
-                Image(systemName: "phone.down.fill")
-                    .font(.system(size: 14, weight: .bold))
-                Text("Encerrar")
-                    .font(.system(size: 15, weight: .semibold))
+    private var controls: some View {
+        HStack(spacing: 12) {
+            if store.voiceState == .speaking {
+                Button {
+                    store.interruptFromUser()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "hand.raised.fill")
+                            .font(.system(size: 13, weight: .bold))
+                        Text("Interromper")
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
+                    .background(Capsule().fill(Color.white.opacity(0.12)))
+                    .overlay(Capsule().strokeBorder(Theme.hairline))
+                }
+                .buttonStyle(PressableStyle())
             }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 26)
-            .padding(.vertical, 14)
-            .background(
-                Capsule()
-                    .fill(Theme.danger.opacity(0.9))
-            )
-            .overlay(Capsule().strokeBorder(Color.white.opacity(0.25)))
-            .shadow(color: Theme.danger.opacity(0.45), radius: 20, x: 0, y: 10)
+
+            Button {
+                store.stopVoiceMode()
+            } label: {
+                HStack(spacing: 9) {
+                    Image(systemName: "phone.down.fill")
+                        .font(.system(size: 14, weight: .bold))
+                    Text("Encerrar")
+                        .font(.system(size: 15, weight: .semibold))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 26)
+                .padding(.vertical, 14)
+                .background(
+                    Capsule()
+                        .fill(Theme.danger.opacity(0.9))
+                )
+                .overlay(Capsule().strokeBorder(Color.white.opacity(0.25)))
+                .shadow(color: Theme.danger.opacity(0.45), radius: 20, x: 0, y: 10)
+            }
+            .buttonStyle(PressableStyle())
         }
-        .buttonStyle(PressableStyle())
+    }
+}
+
+/// Quatro barras que sobem e descem como um medidor de volume.
+private struct VoiceBars: View {
+    var level: CGFloat
+    var state: ChatStore.VoiceState
+
+    private var speed: Double {
+        switch state {
+        case .speaking: return 5.6
+        case .thinking: return 2.3
+        default: return 1.7
+        }
+    }
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
+            let time = context.date.timeIntervalSinceReferenceDate
+            let mic = Double(max(0.05, min(1.0, level)))
+
+            HStack(alignment: .center, spacing: 15) {
+                ForEach(0..<4, id: \.self) { index in
+                    let phase = time * speed + Double(index) * 1.1
+                    let wave = (sin(phase) + 1) / 2
+                    let amount = height(for: wave, mic: mic)
+
+                    Capsule(style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Theme.accent2.opacity(0.95),
+                                    Theme.accent
+                                ],
+                                startPoint: .bottom,
+                                endPoint: .top
+                            )
+                        )
+                        .frame(width: 30, height: 40 + CGFloat(amount) * 175)
+                        .shadow(color: Theme.accent.opacity(0.5), radius: 16, x: 0, y: 8)
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func height(for wave: Double, mic: Double) -> Double {
+        switch state {
+        case .speaking:
+            return 0.30 + 0.62 * wave
+        case .thinking:
+            return 0.14 + 0.22 * wave
+        case .listening:
+            return 0.08 + mic * 0.85 * (0.55 + 0.45 * wave)
+        case .idle:
+            return 0.06 + 0.09 * wave
+        }
     }
 }

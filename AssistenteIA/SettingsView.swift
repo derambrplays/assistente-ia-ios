@@ -7,6 +7,7 @@ struct SettingsView: View {
 
     @State private var keyDraft = ""
     @State private var showKey = false
+    @State private var newMemory = ""
 
     private var models: [String] {
         var list = store.availableModels
@@ -22,6 +23,9 @@ struct SettingsView: View {
                 VStack(spacing: 16) {
                     keyCard
                     modelCard
+                    profileCard
+                    memoryCard
+                    locationCard
                     personalityCard
                     voiceCard
                     aboutCard
@@ -72,11 +76,11 @@ struct SettingsView: View {
                 .font(.system(size: 13, design: .monospaced))
                 .padding(10)
                 .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .fill(Color.white.opacity(0.06))
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .strokeBorder(Theme.hairline)
                 )
 
@@ -88,7 +92,7 @@ struct SettingsView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .fill(Theme.accent.opacity(0.85))
                 )
                 .foregroundStyle(.white)
@@ -161,6 +165,199 @@ struct SettingsView: View {
         .glassCard()
     }
 
+    // MARK: - Perfil
+
+    private var profileCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Sobre você", systemImage: "person.crop.circle")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+
+            Text("O Joguim usa isso para personalizar as respostas. Fica só neste iPhone.")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textDim)
+
+            profileField("Nome", placeholder: "Como quer ser chamado?", text: $store.settings.profile.name)
+            profileField("Idade", placeholder: "Ex.: 17", text: $store.settings.profile.age)
+            profileField("O que faz / trabalha", placeholder: "Estudos, trabalho…", text: $store.settings.profile.work)
+            profileField("Cidade", placeholder: "Onde você mora?", text: $store.settings.profile.city)
+            profileField("Gostos e interesses", placeholder: "Música, jogos, esportes…", text: $store.settings.profile.likes)
+            profileField("Outras informações", placeholder: "Qualquer coisa útil", text: $store.settings.profile.notes)
+
+            Button("Refazer apresentação inicial") {
+                store.settings.onboardingDone = false
+                store.save()
+                dismiss()
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(Theme.textDim)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard()
+    }
+
+    private func profileField(
+        _ title: String,
+        placeholder: String,
+        text: Binding<String>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title)
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(Theme.textDim)
+
+            TextField(placeholder, text: text)
+                .font(.system(size: 14))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(Color.white.opacity(0.05))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(Theme.hairline)
+                )
+        }
+    }
+
+    // MARK: - Memória
+
+    private var memoryCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Memória", systemImage: "brain.head.profile")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+
+            Text("O que o Joguim acha importante guardar aparece aqui e é lembrado nas próximas conversas.")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textDim)
+
+            Toggle(isOn: $store.settings.autoMemory) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Guardar sozinho")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                    Text("Ele decide o que é importante e salva.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textFaint)
+                }
+            }
+            .tint(Theme.accent)
+
+            if store.settings.memories.isEmpty {
+                Text("Nada guardado ainda.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textFaint)
+                    .padding(.vertical, 2)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(store.settings.memories, id: \.self) { memory in
+                        HStack(alignment: .top, spacing: 10) {
+                            Text(memory)
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            Button {
+                                store.removeMemory(memory)
+                            } label: {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(Theme.danger.opacity(0.9))
+                                    .padding(6)
+                            }
+                            .buttonStyle(PressableStyle())
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .fill(Color.white.opacity(0.05))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .strokeBorder(Theme.hairline)
+                        )
+                    }
+                }
+            }
+
+            HStack(spacing: 8) {
+                TextField("Adicionar à memória…", text: $newMemory, axis: .vertical)
+                    .lineLimit(1...3)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(Color.white.opacity(0.05))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(Theme.hairline)
+                    )
+
+                Button {
+                    store.addMemory(newMemory)
+                    newMemory = ""
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 36, height: 36)
+                        .background(Circle().fill(Theme.accent.opacity(0.3)))
+                        .overlay(Circle().strokeBorder(Theme.accent.opacity(0.5)))
+                }
+                .buttonStyle(PressableStyle())
+                .disabled(newMemory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard()
+    }
+
+    // MARK: - Localização
+
+    private var locationCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Localização em tempo real", systemImage: "location.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+
+            Toggle(isOn: $store.settings.useLocation) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Usar minha localização")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                    Text("Para achar a escola, mercado ou farmácia mais perto.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textFaint)
+                }
+            }
+            .tint(Theme.accent)
+            .onChange(of: store.settings.useLocation) { enabled in
+                if enabled {
+                    store.location.request()
+                }
+                store.save()
+            }
+
+            if let summary = store.location.summary, store.settings.useLocation {
+                Text(summary)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textDim)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard()
+    }
+
     // MARK: - Personalidade
 
     private var personalityCard: some View {
@@ -180,11 +377,11 @@ struct SettingsView: View {
                 .frame(minHeight: 130)
                 .padding(8)
                 .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .fill(Color.white.opacity(0.05))
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .strokeBorder(Theme.hairline)
                 )
 
@@ -255,11 +452,11 @@ struct SettingsView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.white)
 
-            Text("Assistente IA 1.3 — roda inteiro no iPhone, sem computador.")
+            Text("Joguim AI 2.0 — roda inteiro no iPhone, sem computador.")
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.textDim)
 
-            Text("Anexe fotos e arquivos, fale por voz e peça para pesquisar na internet.")
+            Text("Anexe fotos e arquivos, fale por voz, identifique músicas e peça para pesquisar na internet.")
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.textFaint)
 

@@ -18,7 +18,7 @@ struct KeyEntryView: View {
                 VStack(spacing: 14) {
                     SparkleMark(size: 76)
 
-                    Text("Assistente IA")
+                    Text("Joguim AI")
                         .font(.system(size: 30, weight: .bold))
                         .foregroundStyle(.white)
 
@@ -90,11 +90,11 @@ struct KeyEntryView: View {
             .padding(.trailing, 5)
             .padding(.vertical, 5)
             .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .fill(Color.white.opacity(0.06))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .strokeBorder(Theme.hairline)
             )
 
@@ -113,7 +113,7 @@ struct KeyEntryView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
                 .background(
-                    RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
                         .fill(
                             LinearGradient(
                                 colors: [Theme.accent, Theme.accent.opacity(0.78)],
@@ -123,7 +123,7 @@ struct KeyEntryView: View {
                         )
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
                         .strokeBorder(Color.white.opacity(0.25))
                 )
             }
