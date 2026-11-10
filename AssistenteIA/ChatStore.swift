@@ -20,12 +20,14 @@ final class ChatStore: ObservableObject {
     @Published var voiceMode = false
     @Published var voiceState: VoiceState = .idle
     @Published var liveTranscript = ""
+    @Published var cameraEnabled = false
     @Published var availableModels: [String] = GeminiClient.chatFallbacks
 
     let speech = SpeechController()
     let player = AudioPlayer()
     let location = LocationProvider()
     let musicRecorder = MusicRecorder()
+    let camera = CameraProvider()
 
     private var sendTask: Task<Void, Never>?
     private var lastSpoken = ""
@@ -151,7 +153,12 @@ final class ChatStore: ObservableObject {
 
     // MARK: - Enviar
 
-    func send(_ raw: String, attachments: [Attachment] = [], speakReply: Bool = false) {
+    func send(
+        _ raw: String,
+        attachments: [Attachment] = [],
+        speakReply: Bool = false,
+        visionFrame: Data? = nil
+    ) {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !attachments.isEmpty, !isSending else { return }
         guard hasKey else {
@@ -159,9 +166,21 @@ final class ChatStore: ObservableObject {
             return
         }
 
+        // Pedidos de gerar/editar imagem vão para o modelo de imagem.
+        if Self.wantsImageEdit(text, attachments: attachments) {
+            generateImage(prompt: text, attachments: attachments)
+            return
+        }
+
+        var finalAttachments = attachments
+        if let visionFrame,
+           let frame = AttachmentStore.make(name: "camera.jpg", mimeType: "image/jpeg", data: visionFrame) {
+            finalAttachments.append(frame)
+        }
+
         mutateActive { conversation in
             conversation.messages.append(
-                ChatMessage(role: .user, text: text, attachments: attachments)
+                ChatMessage(role: .user, text: text, attachments: finalAttachments)
             )
         }
 
@@ -325,6 +344,8 @@ final class ChatStore: ObservableObject {
         voiceMode = true
         voiceState = .listening
         liveTranscript = ""
+        cameraEnabled = false
+        camera.stop()
 
         // Deixa o alto-falante pronto antes da primeira resposta.
         player.prepare(voiceMode: true)
@@ -347,6 +368,8 @@ final class ChatStore: ObservableObject {
         voiceMode = false
         voiceState = .idle
         liveTranscript = ""
+        cameraEnabled = false
+        camera.stop()
 
         sendTask?.cancel()
         sendTask = nil
@@ -385,7 +408,11 @@ final class ChatStore: ObservableObject {
 
         liveTranscript = clean
         voiceState = .thinking
-        send(clean, speakReply: true)
+
+        // Com a câmera ligada, manda o quadro atual junto: ele "vê" o que
+        // está na sua frente enquanto responde.
+        let frame = cameraEnabled ? camera.latestJPEG() : nil
+        send(clean, speakReply: true, visionFrame: frame)
     }
 
     func speak(_ raw: String) {
@@ -778,6 +805,135 @@ final class ChatStore: ObservableObject {
             "Identifique a música deste áudio. Se for alguém cantando a letra, pesquise o trecho na internet. Responda com o nome da música, o artista e o ano, e diga em qual trecho você se baseou.",
             attachments: [attachment]
         )
+    }
+
+    // MARK: - Câmera ao vivo
+
+    func toggleCamera() {
+        if cameraEnabled {
+            cameraEnabled = false
+            camera.stop()
+            return
+        }
+
+        Task {
+            let granted = await camera.requestAccess()
+            await MainActor.run {
+                guard granted else {
+                    self.banner = "Autorize a câmera nos Ajustes do iPhone para o Joguim ver ao vivo."
+                    return
+                }
+                self.camera.start()
+                self.cameraEnabled = true
+            }
+        }
+    }
+
+    // MARK: - Gerar / editar imagem
+
+    /// Detecta pedidos de imagem para não mandar para o modelo de conversa.
+    private static func wantsImageEdit(_ text: String, attachments: [Attachment]) -> Bool {
+        let lower = text.lowercased()
+        let hasImage = attachments.contains { $0.isImage }
+
+        let direct = [
+            "desenhe", "desenhar", "desenha pra mim", "desenhe pra mim",
+            "gere uma imagem", "gerar uma imagem", "crie uma imagem", "criar uma imagem",
+            "gere uma foto", "gerar uma foto", "crie uma foto", "criar uma foto",
+            "faça uma imagem", "fazer uma imagem", "faça uma foto", "fazer uma foto",
+            "faca uma imagem", "faca uma foto", "quero uma imagem", "quero uma foto",
+            "monte uma imagem", "monte uma foto", "produza uma imagem", "produza uma foto"
+        ]
+        if direct.contains(where: { lower.contains($0) }) { return true }
+
+        let imageWords = [
+            "imagem", "foto", "fotografia", "desenho", "ilustração", "ilustracao",
+            "arte", "retrato", "selfie", "figura"
+        ]
+        let generateWords = [
+            "gere", "gerar", "crie", "criar", "desenhe", "desenhar",
+            "mostre", "mostra", "produza", "produzir", "monte", "montar",
+            "quero uma", "quero um", "faça", "faca"
+        ]
+        let editStems = [
+            "remov", "tir", "apag", "edit", "troc", "mud", "coloc", "adicion",
+            "alter", "recort", "melhor", "deix", "transform", "corrig", "limp",
+            "substitu"
+        ]
+
+        if hasImage && editStems.contains(where: { lower.contains($0) }) {
+            return true
+        }
+
+        if imageWords.contains(where: { lower.contains($0) }),
+           generateWords.contains(where: { lower.contains($0) }) {
+            return true
+        }
+
+        return false
+    }
+
+    func generateImage(prompt raw: String, attachments: [Attachment] = []) {
+        let prompt = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty, !isSending else { return }
+        guard hasKey else {
+            banner = "Configure sua chave do Gemini para gerar imagens."
+            return
+        }
+
+        mutateActive { conversation in
+            conversation.messages.append(
+                ChatMessage(role: .user, text: prompt, attachments: attachments)
+            )
+        }
+
+        let assistantID = UUID()
+        mutateActive { conversation in
+            conversation.messages.append(ChatMessage(id: assistantID, role: .assistant, text: ""))
+        }
+
+        isSending = true
+        banner = nil
+
+        let inputs: [(mimeType: String, data: Data)] = attachments.compactMap { attachment in
+            guard attachment.isImage,
+                  let data = AttachmentStore.data(for: attachment) else { return nil }
+            return (attachment.mimeType, data)
+        }
+
+        sendTask = Task { [weak self] in
+            guard let self = self else { return }
+            do {
+                let result = try await GeminiClient.generateImage(prompt: prompt, inputImages: inputs)
+                await MainActor.run {
+                    var saved: [Attachment] = []
+                    for (index, image) in result.images.enumerated() {
+                        let ext = image.mimeType.lowercased().contains("png") ? "png" : "jpg"
+                        let name = "joguim-imagem-\(index + 1).\(ext)"
+                        if let attachment = AttachmentStore.make(
+                            name: name,
+                            mimeType: image.mimeType,
+                            data: image.data
+                        ) {
+                            saved.append(attachment)
+                        }
+                    }
+
+                    self.mutateMessage(assistantID) { message in
+                        message.text = result.text.isEmpty ? "Pronto! Aqui está a imagem." : result.text
+                        message.attachments.append(contentsOf: saved)
+                        if saved.isEmpty { message.isError = true }
+                    }
+                    // Em modo de voz o complete já fala sozinho.
+                    self.complete(assistantID, speakReply: false)
+                }
+            } catch is CancellationError {
+                self.complete(assistantID, speakReply: false, interrupted: true)
+            } catch {
+                let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                self.fail(assistantID, message)
+            }
+        }
     }
 
     // MARK: - Persistência

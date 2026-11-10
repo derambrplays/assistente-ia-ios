@@ -17,9 +17,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>2.0</string>
+    <string>2.1</string>
     <key>CFBundleVersion</key>
-    <string>7</string>
+    <string>8</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
@@ -28,6 +28,8 @@
     <string>Para transformar sua fala em texto.</string>
     <key>NSPhotoLibraryUsageDescription</key>
     <string>Para anexar fotos às suas mensagens.</string>
+    <key>NSPhotoLibraryAddUsageDescription</key>
+    <string>Para salvar em Fotos as imagens que o Joguim criar para você.</string>
     <key>NSCameraUsageDescription</key>
     <string>Para tirar fotos e enviar ao assistente.</string>
     <key>NSLocationWhenInUseUsageDescription</key>

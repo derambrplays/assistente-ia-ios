@@ -9,6 +9,12 @@ struct GeminiError: LocalizedError {
     var errorDescription: String? { message }
 }
 
+/// Imagem devolvida pelo modelo de geração/edição.
+struct GeneratedImage {
+    let mimeType: String
+    let data: Data
+}
+
 enum GeminiClient {
     static let apiBase = "https://generativelanguage.googleapis.com/v1beta"
 
@@ -720,6 +726,223 @@ enum GeminiClient {
                 }
                 if !text.isEmpty { return text }
             } catch {
+                lastError = GeminiError(message: error.localizedDescription, retryable: true)
+            }
+        }
+
+        throw lastError
+    }
+
+    // MARK: - Geração e edição de imagens
+
+    static let imageFallbacks = [
+        "gemini-3-pro-image-preview",
+        "gemini-2.5-flash-image",
+        "gemini-3.1-flash-image",
+        "gemini-2.5-flash-image-preview",
+        "gemini-2.0-flash-preview-image-generation"
+    ]
+
+    private static let imageCacheLock = NSLock()
+    private static var imageModelCache: [String] = []
+    private static var imageModelCacheDate: Date?
+
+    private static func imageScore(_ id: String) -> Int {
+        let lower = id.lowercased()
+        var score = 0
+        if lower.contains("pro") { score += 30 }
+        if lower.contains("flash") { score += 20 }
+        if lower.contains("image") { score += 10 }
+        if lower.contains("latest") { score += 4 }
+        if lower.contains("preview") || lower.contains("exp") { score -= 3 }
+        if lower.hasSuffix("-001") || lower.hasSuffix("-002") || lower.hasSuffix("-003") { score -= 2 }
+        return score
+    }
+
+    private static func allModels() async -> [[String: Any]] {
+        let key = apiKey
+        guard !key.isEmpty else { return [] }
+        guard let url = URL(string: "\(apiBase)/models?pageSize=1000") else { return [] }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        applyHeaders(&request, key: key)
+
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse, http.statusCode == 200,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let models = object["models"] as? [[String: Any]] else {
+            return []
+        }
+        return models
+    }
+
+    /// Modelos que geram/editam imagem (os "gemini ... image").
+    static func imageModels() async -> [String] {
+        imageCacheLock.lock()
+        let cached = imageModelCache
+        let stamp = imageModelCacheDate
+        imageCacheLock.unlock()
+
+        if !cached.isEmpty, let stamp, Date().timeIntervalSince(stamp) < 600 {
+            return cached
+        }
+
+        let models = await allModels()
+        var found: [String] = []
+
+        for model in models {
+            guard let name = model["name"] as? String else { continue }
+            let id = name.split(separator: "/").last.map(String.init) ?? name
+            let lower = id.lowercased()
+
+            guard lower.contains("gemini") else { continue }
+            guard lower.contains("image") || lower.contains("imagen") else { continue }
+
+            let methods = (model["supportedGenerationMethods"] as? [String]) ?? []
+            if !methods.isEmpty && !methods.contains("generateContent") { continue }
+
+            if !found.contains(id) { found.append(id) }
+        }
+
+        let ordered = found.sorted { a, b in
+            let sa = imageScore(a)
+            let sb = imageScore(b)
+            if sa != sb { return sa > sb }
+            return a < b
+        }
+        let result = ordered.isEmpty ? imageFallbacks : ordered
+
+        imageCacheLock.lock()
+        imageModelCache = result
+        imageModelCacheDate = Date()
+        imageCacheLock.unlock()
+        return result
+    }
+
+    /// Gera uma imagem nova ou edita as imagens enviadas (ex.: remover uma pessoa).
+    static func generateImage(
+        prompt: String,
+        inputImages: [(mimeType: String, data: Data)] = []
+    ) async throws -> (text: String, images: [GeneratedImage]) {
+        let key = apiKey
+        guard !key.isEmpty else {
+            throw GeminiError(message: "Configure sua chave do Gemini para gerar imagens.")
+        }
+
+        let clean = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else {
+            throw GeminiError(message: "Descreva a imagem que você quer.")
+        }
+
+        var parts: [[String: Any]] = []
+        for image in inputImages {
+            parts.append([
+                "inlineData": [
+                    "mimeType": image.mimeType,
+                    "data": image.data.base64EncodedString()
+                ]
+            ])
+        }
+
+        let instruction = inputImages.isEmpty
+            ? clean
+            : "Edite a imagem enviada exatamente como o usuário pediu. Mantenha o restante da imagem o mais fiel possível ao original. Pedido: \(clean)"
+        parts.append(["text": instruction])
+
+        let body: [String: Any] = [
+            "contents": [["role": "user", "parts": parts]],
+            "generationConfig": ["responseModalities": ["TEXT", "IMAGE"]]
+        ]
+        let bodyData = try JSONSerialization.data(withJSONObject: body)
+
+        var candidates: [String] = []
+        for candidate in await imageModels() + imageFallbacks where !candidates.contains(candidate) {
+            candidates.append(candidate)
+        }
+
+        var lastError = GeminiError(message: "Não consegui gerar a imagem. Tente de novo.", retryable: true)
+
+        for candidate in candidates where !isExhausted(candidate) {
+            guard let url = URL(string: "\(apiBase)/models/\(candidate):generateContent") else { continue }
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.timeoutInterval = 180
+            applyHeaders(&request, key: key)
+            request.httpBody = bodyData
+
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else { continue }
+
+                if http.statusCode != 200 {
+                    let raw = String(data: data, encoding: .utf8) ?? ""
+                    if http.statusCode == 429 { markExhausted(candidate) }
+
+                    let base = friendly(http.statusCode)
+                    let reason = apiReason(from: raw)
+                    lastError = GeminiError(
+                        message: reason.isEmpty ? base : "\(base)\n\nDetalhe da API (\(http.statusCode)): \(reason)",
+                        retryable: [429, 500, 502, 503].contains(http.statusCode),
+                        status: http.statusCode,
+                        dailyQuota: http.statusCode == 429 && isDailyQuota(raw)
+                    )
+
+                    if lastError.retryable || http.statusCode == 404 || http.statusCode == 400 {
+                        continue
+                    }
+                    throw lastError
+                }
+
+                guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let list = object["candidates"] as? [[String: Any]],
+                      let content = list.first?["content"] as? [String: Any],
+                      let responseParts = content["parts"] as? [[String: Any]] else {
+                    lastError = GeminiError(message: "A API não devolveu imagem. Tente outro pedido.", retryable: true)
+                    continue
+                }
+
+                var text = ""
+                var images: [GeneratedImage] = []
+
+                for part in responseParts {
+                    if let piece = part["text"] as? String {
+                        text += piece
+                    }
+                    if let inline = part["inlineData"] as? [String: Any],
+                       let mime = inline["mimeType"] as? String,
+                       let base64 = inline["data"] as? String,
+                       let imageData = Data(base64Encoded: base64) {
+                        images.append(GeneratedImage(mimeType: mime, data: imageData))
+                    }
+                }
+
+                if !images.isEmpty {
+                    return (text.trimmingCharacters(in: .whitespacesAndNewlines), images)
+                }
+
+                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    throw GeminiError(message: text.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+
+                let finish = list.first?["finishReason"] as? String ?? ""
+                lastError = GeminiError(
+                    message: finish.isEmpty
+                        ? "A API não devolveu imagem. Tente outro pedido."
+                        : "A imagem foi bloqueada (\(finish)). Tente descrever de outro jeito.",
+                    retryable: true
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let error as GeminiError {
+                lastError = error
+                if error.retryable || error.status == 404 || error.status == 400 {
+                    continue
+                }
+                throw error
+            } catch {
+                if Task.isCancelled { throw CancellationError() }
                 lastError = GeminiError(message: error.localizedDescription, retryable: true)
             }
         }

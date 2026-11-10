@@ -161,6 +161,13 @@ private struct AttachmentPreview: View {
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .strokeBorder(Color.white.opacity(0.16))
                 )
+                .contextMenu {
+                    Button {
+                        UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
+                    } label: {
+                        Label("Salvar em Fotos", systemImage: "square.and.arrow.down")
+                    }
+                }
         } else {
             HStack(spacing: 8) {
                 Image(systemName: attachment.symbol)

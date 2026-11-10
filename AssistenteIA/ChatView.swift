@@ -7,6 +7,8 @@ struct ChatView: View {
 
     @State private var draft = ""
     @State private var attachments: [Attachment] = []
+    @State private var showImagePrompt = false
+    @State private var imagePrompt = ""
     @FocusState private var inputFocused: Bool
 
     private let suggestions = [
@@ -31,8 +33,21 @@ struct ChatView: View {
                 onStop: { store.stop() },
                 onVoice: { store.startVoiceMode() },
                 onMusic: { store.identifyMusic() },
+                onImage: { showImagePrompt = true },
                 onError: { store.banner = $0 }
             )
+        }
+        .alert("Gerar imagem", isPresented: $showImagePrompt) {
+            TextField("Descreva a imagem…", text: $imagePrompt, axis: .vertical)
+            Button("Cancelar", role: .cancel) { imagePrompt = "" }
+            Button("Gerar") {
+                let prompt = imagePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                imagePrompt = ""
+                guard !prompt.isEmpty else { return }
+                store.generateImage(prompt: prompt)
+            }
+        } message: {
+            Text("Descreva o que o Joguim deve criar. Para editar uma foto (ex.: remover uma pessoa), anexe a foto e escreva o pedido.")
         }
     }
 

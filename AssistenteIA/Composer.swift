@@ -11,6 +11,7 @@ struct Composer: View {
     var onStop: () -> Void
     var onVoice: () -> Void
     var onMusic: () -> Void
+    var onImage: () -> Void
     var onError: (String) -> Void
 
     @State private var photoItems: [PhotosPickerItem] = []
@@ -59,6 +60,12 @@ struct Composer: View {
                         onMusic()
                     } label: {
                         Label("Identificar música", systemImage: "music.note")
+                    }
+                    Button {
+                        focused = false
+                        onImage()
+                    } label: {
+                        Label("Gerar imagem", systemImage: "photo.badge.plus")
                     }
                 } label: {
                     Group {
