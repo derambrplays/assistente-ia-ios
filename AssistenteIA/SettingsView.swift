@@ -61,7 +61,7 @@ struct SettingsView: View {
 
     private var keyCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Chave do Gemini", systemImage: "key.fill")
+            Label("Sua chave de acesso", systemImage: "key.fill")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.white)
 
@@ -133,14 +133,14 @@ struct SettingsView: View {
 
             Picker("Modelo", selection: $store.settings.model) {
                 ForEach(models, id: \.self) { model in
-                    Text(GeminiClient.isExhausted(model) ? "\(model) — sem cota hoje" : model)
+                    Text(GeminiClient.isExhausted(model) ? "\(AppInfo.modelName(model)) — ocupado hoje" : AppInfo.modelName(model))
                         .tag(model)
                 }
             }
             .pickerStyle(.menu)
             .tint(Theme.accent)
 
-            Text("Para conversa por voz, o flash-lite responde mais rápido. No plano gratuito cada modelo tem cota diária própria: se um esgotar, o app tenta outro sozinho.")
+            Text("O modo Rápido responde mais rápido na conversa por voz. Se um modelo estiver ocupado, o app tenta outro sozinho.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(Theme.textFaint)
 
@@ -410,13 +410,13 @@ struct SettingsView: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.white)
 
-            Toggle("Voz natural (Gemini)", isOn: $store.settings.naturalVoice)
+            Toggle("Voz natural", isOn: $store.settings.naturalVoice)
                 .font(.system(size: 13))
                 .tint(Theme.accent)
 
             Text(store.settings.naturalVoice
-                 ? "Voz humana gerada pelo Google. Precisa de internet."
-                 : "Voz do próprio iPhone, mais rápida e sem gastar cota.")
+                 ? "Voz humana gerada no servidor. Precisa de internet."
+                 : "Voz do próprio iPhone, mais rápida e sem usar o servidor.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(Theme.textFaint)
 
@@ -505,6 +505,10 @@ struct SettingsView: View {
             Text("Joguim AI \(AppInfo.version) (\(AppInfo.build)) — roda inteiro no iPhone, sem computador.")
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.textDim)
+
+            Text("Criado por \(AppInfo.creator).")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.accent2)
 
             Text("Anexe fotos e arquivos, fale por voz, identifique músicas e peça para pesquisar na internet.")
                 .font(.system(size: 12))

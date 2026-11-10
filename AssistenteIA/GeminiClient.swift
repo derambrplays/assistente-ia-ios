@@ -110,13 +110,13 @@ enum GeminiClient {
 
     private static func friendly(_ code: Int) -> String {
         switch code {
-        case 400: return "Requisição inválida. Verifique o modelo escolhido nas Configurações."
-        case 401, 403: return "Chave do Gemini inválida ou sem permissão. Confira a chave nas Configurações."
-        case 404: return "Modelo não encontrado. Escolha outro nas Configurações."
+        case 400: return "Não consegui entender o pedido. Tente de novo."
+        case 401, 403: return "Chave de acesso inválida ou sem permissão. Confira a chave nos Ajustes."
+        case 404: return "Modelo não encontrado. Escolha outro nos Ajustes."
         case 413: return "Arquivo muito grande para enviar."
-        case 429: return "O limite de uso do Gemini foi atingido. Se for a cota diária, troque de modelo nas Configurações (cada modelo tem cota própria) ou aguarde a renovação, à meia-noite no horário do Pacífico."
-        case 500, 502, 503: return "O Gemini está sobrecarregado agora. Tente de novo em instantes."
-        default: return "Erro \(code) ao falar com o Gemini."
+        case 429: return "O servidor está sobrecarregado agora. Tente de novo em instantes."
+        case 500, 502, 503: return "O servidor está sobrecarregado agora. Tente de novo em instantes."
+        default: return "Erro \(code) ao falar com o servidor."
         }
     }
 
@@ -281,7 +281,7 @@ enum GeminiClient {
     ) async throws {
         let key = apiKey
         guard !key.isEmpty else {
-            throw GeminiError(message: "Configure sua chave do Gemini para começar.")
+            throw GeminiError(message: "Configure sua chave de acesso para começar.")
         }
 
         var contents: [[String: Any]] = []
@@ -315,11 +315,7 @@ enum GeminiClient {
         let withQuota = candidates.filter { !isExhausted($0) }
         if withQuota.isEmpty {
             throw GeminiError(
-                message: """
-                A cota diária gratuita do Gemini acabou para todos os modelos conhecidos. \
-                Ela renova à meia-noite no horário do Pacífico (por volta das 05h no Brasil). \
-                Se quiser continuar agora, crie outra chave no Google AI Studio e cole nas Configurações.
-                """,
+                message: ServerStatus.busyMessage(until: ServerStatus.nextReset),
                 status: 429,
                 dailyQuota: true
             )
@@ -331,7 +327,7 @@ enum GeminiClient {
             return parts.contains { $0["inlineData"] != nil }
         }
 
-        var lastError = GeminiError(message: "O Gemini não respondeu. Tente de novo.")
+        var lastError = GeminiError(message: "O servidor não respondeu. Tente de novo.")
         for candidate in candidates {
             var tryingSearch = search && supportsSearch(candidate)
             var tryingThinking = voice && supportsThinkingOff(candidate)
@@ -448,9 +444,7 @@ enum GeminiClient {
                 if detail.count > 800 { break }
             }
             let retryable = [429, 500, 502, 503].contains(http.statusCode)
-            let base = friendly(http.statusCode)
-            let reason = apiReason(from: detail)
-            let message = reason.isEmpty ? base : "\(base)\n\nDetalhe da API (\(http.statusCode)): \(reason)"
+            let message = friendly(http.statusCode)
             let daily = http.statusCode == 429 && isDailyQuota(detail)
             throw GeminiError(
                 message: message,
@@ -491,7 +485,7 @@ enum GeminiClient {
         }
 
         if !gotAny {
-            throw GeminiError(message: "O Gemini não respondeu. Tente de novo.", retryable: true)
+            throw GeminiError(message: "O servidor não respondeu. Tente de novo.", retryable: true)
         }
     }
 
@@ -556,7 +550,7 @@ enum GeminiClient {
     static func speak(text: String, voice: String) async throws -> Data {
         let key = apiKey
         guard !key.isEmpty else {
-            throw GeminiError(message: "Configure sua chave do Gemini para usar a voz.")
+            throw GeminiError(message: "Configure sua chave de acesso para usar a voz.")
         }
 
         let clean = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(4000))
@@ -602,7 +596,7 @@ enum GeminiClient {
                       let candidates = object["candidates"] as? [[String: Any]],
                       let content = candidates.first?["content"] as? [String: Any],
                       let parts = content["parts"] as? [[String: Any]] else {
-                    lastError = GeminiError(message: "O Google não devolveu o áudio.", retryable: true)
+                    lastError = GeminiError(message: "O servidor não devolveu o áudio.", retryable: true)
                     continue
                 }
                 markTTSWorking(model)
@@ -617,7 +611,7 @@ enum GeminiClient {
                     }
                     return wavFromPCM(audio)
                 }
-                lastError = GeminiError(message: "O Google não devolveu o áudio.", retryable: true)
+                lastError = GeminiError(message: "O servidor não devolveu o áudio.", retryable: true)
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
@@ -666,7 +660,7 @@ enum GeminiClient {
     static func transcribe(audio: Data, mimeType: String) async throws -> String {
         let key = apiKey
         guard !key.isEmpty else {
-            throw GeminiError(message: "Configure sua chave do Gemini.")
+            throw GeminiError(message: "Configure sua chave de acesso.")
         }
 
         let prompt = "Transcreva fielmente o que é falado neste áudio, em português do Brasil. Devolva apenas o texto falado, sem comentários, sem aspas, sem títulos e sem formatação. Use pontuação natural. Se não houver fala, devolva uma resposta vazia."
@@ -764,7 +758,7 @@ enum GeminiClient {
     static func quickText(prompt: String, maxTokens: Int = 400, temperature: Double = 0.3) async throws -> String {
         let key = apiKey
         guard !key.isEmpty else {
-            throw GeminiError(message: "Configure sua chave do Gemini.")
+            throw GeminiError(message: "Configure sua chave de acesso.")
         }
 
         let body: [String: Any] = [
@@ -781,7 +775,7 @@ enum GeminiClient {
             models.append("gemini-flash-lite-latest")
         }
 
-        var lastError = GeminiError(message: "O Gemini não respondeu.", retryable: true)
+        var lastError = GeminiError(message: "O servidor não respondeu.", retryable: true)
 
         for model in models where !isExhausted(model) {
             guard let url = URL(string: "\(apiBase)/models/\(model):generateContent") else { continue }
@@ -920,7 +914,7 @@ enum GeminiClient {
     ) async throws -> (text: String, images: [GeneratedImage]) {
         let key = apiKey
         guard !key.isEmpty else {
-            throw GeminiError(message: "Configure sua chave do Gemini para gerar imagens.")
+            throw GeminiError(message: "Configure sua chave de acesso para gerar imagens.")
         }
 
         let clean = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -974,9 +968,8 @@ enum GeminiClient {
                     if http.statusCode == 429 { markExhausted(candidate) }
 
                     let base = friendly(http.statusCode)
-                    let reason = apiReason(from: raw)
                     lastError = GeminiError(
-                        message: reason.isEmpty ? base : "\(base)\n\nDetalhe da API (\(http.statusCode)): \(reason)",
+                        message: base,
                         retryable: [429, 500, 502, 503].contains(http.statusCode),
                         status: http.statusCode,
                         dailyQuota: http.statusCode == 429 && isDailyQuota(raw)

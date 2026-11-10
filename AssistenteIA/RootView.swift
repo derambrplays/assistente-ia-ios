@@ -67,20 +67,28 @@ struct RootView: View {
                 .environmentObject(store)
         }
         .overlay(alignment: .top) {
-            if let banner = store.banner {
-                Text(banner)
-                    .font(.system(size: 13, weight: .medium))
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 11)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .overlay(Capsule().strokeBorder(Theme.hairline))
-                    .padding(.horizontal, 20)
-                    .padding(.top, 6)
-                    .onTapGesture { store.banner = nil }
-                    .transition(.move(edge: .top).combined(with: .opacity))
+            VStack(spacing: 8) {
+                if let until = store.serverBusyUntil {
+                    ServerBusyBanner(until: until) {
+                        store.serverBusyUntil = nil
+                    }
+                }
+
+                if let banner = store.banner {
+                    Text(banner)
+                        .font(.system(size: 13, weight: .medium))
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 11)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .overlay(Capsule().strokeBorder(Theme.hairline))
+                        .onTapGesture { store.banner = nil }
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
             }
+            .padding(.horizontal, 20)
+            .padding(.top, 6)
         }
     }
 }

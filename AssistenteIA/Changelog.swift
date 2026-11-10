@@ -1,6 +1,9 @@
 import Foundation
 
 enum AppInfo {
+    /// Nome de quem criou o app (aparece na interface e no que a IA responde).
+    static let creator = "Kalleb Ribeiro de Souza Silva"
+
     static var version: String {
         (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "?"
     }
@@ -11,6 +14,25 @@ enum AppInfo {
 
     /// Muda a cada atualização instalada (versão + build).
     static var buildKey: String { "\(version) (\(build))" }
+
+    /// Nome amigável do modelo, sem citar o provedor por trás do app.
+    static func modelName(_ id: String) -> String {
+        let lower = id.lowercased()
+        var base = "Joguim Equilibrado"
+        if lower.contains("lite") {
+            base = "Joguim Rápido"
+        } else if lower.contains("pro") {
+            base = "Joguim Pro"
+        } else if lower.contains("flash") {
+            base = "Joguim Ágil"
+        }
+
+        let version = id.split(separator: "-").first { $0.first?.isNumber == true }
+        if let version = version {
+            return "\(base) \(version)"
+        }
+        return base
+    }
 }
 
 struct ChangelogItem: Identifiable {
@@ -31,6 +53,37 @@ struct ChangelogRelease: Identifiable {
 /// Ao publicar uma versão nova, coloque a entrada dela no topo desta lista.
 enum Changelog {
     static let releases: [ChangelogRelease] = [
+        ChangelogRelease(
+            version: "2.4",
+            headline: "Mais seu, mais esperto",
+            items: [
+                ChangelogItem(
+                    icon: "person.crop.circle.badge.checkmark",
+                    title: "Criador no comando",
+                    detail: "O Joguim agora responde que foi criado por Kalleb Ribeiro de Souza Silva."
+                ),
+                ChangelogItem(
+                    icon: "text.badge.xmark",
+                    title: "Sem nomes de fora",
+                    detail: "A interface não cita mais outras empresas ou modelos — é só o Joguim AI."
+                ),
+                ChangelogItem(
+                    icon: "timer",
+                    title: "Servidor ocupado com cronômetro",
+                    detail: "Quando o servidor enche, aparece a contagem regressiva até ele voltar, já convertida para o horário de Brasília."
+                ),
+                ChangelogItem(
+                    icon: "camera.fill",
+                    title: "Câmera em tela cheia",
+                    detail: "No modo voz, a câmera cobre a tela toda e sem distorção."
+                ),
+                ChangelogItem(
+                    icon: "rectangle.on.rectangle",
+                    title: "Ver tela",
+                    detail: "Botão novo no modo voz: ele olha o seu print de tela e comenta o que importa."
+                )
+            ]
+        ),
         ChangelogRelease(
             version: "2.3",
             headline: "Agora o Joguim conta o que mudou",
@@ -64,7 +117,7 @@ enum Changelog {
                 ChangelogItem(
                     icon: "globe",
                     title: "Sem espera de busca",
-                    detail: "No modo voz, o Google só é consultado quando você pede."
+                    detail: "No modo voz, a busca na internet só acontece quando você pede."
                 ),
                 ChangelogItem(
                     icon: "text.bubble.fill",

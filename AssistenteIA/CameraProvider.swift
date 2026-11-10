@@ -134,13 +134,27 @@ struct CameraPreview: UIViewRepresentable {
         return view
     }
 
-    func updateUIView(_ uiView: PreviewView, context: Context) {}
+    func updateUIView(_ uiView: PreviewView, context: Context) {
+        uiView.fixOrientation()
+    }
 
     final class PreviewView: UIView {
         override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
 
         var videoPreviewLayer: AVCaptureVideoPreviewLayer {
             layer as! AVCaptureVideoPreviewLayer
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            fixOrientation()
+        }
+
+        /// Sem isso a imagem aparece "achatada" em pé no iPhone.
+        func fixOrientation() {
+            guard let connection = videoPreviewLayer.connection,
+                  connection.isVideoOrientationSupported else { return }
+            connection.videoOrientation = .portrait
         }
     }
 }

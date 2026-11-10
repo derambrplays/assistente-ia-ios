@@ -25,31 +25,36 @@ struct VoiceView: View {
         ZStack {
             AuroraBackground()
 
+            // Câmera ao vivo cobrindo a tela inteira, como uma chamada de vídeo.
+            if store.cameraEnabled {
+                CameraPreview(session: store.camera.session)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+
+                LinearGradient(
+                    colors: [
+                        Color.black.opacity(0.55),
+                        Color.black.opacity(0.12),
+                        Color.black.opacity(0.78)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+            }
+
             VStack(spacing: 0) {
                 header
 
-                Spacer(minLength: 8)
-
-                if store.cameraEnabled {
-                    CameraPreview(session: store.camera.session)
-                        .frame(height: 150)
-                        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                                .strokeBorder(Theme.hairline)
-                        )
-                        .overlay(alignment: .topLeading) {
-                            Label("Câmera ao vivo", systemImage: "video.fill")
-                                .font(.system(size: 10.5, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(.ultraThinMaterial, in: Capsule())
-                                .padding(10)
-                        }
-                        .padding(.bottom, 6)
-                        .transition(.opacity.combined(with: .scale))
+                if let until = store.serverBusyUntil {
+                    ServerBusyBanner(until: until) {
+                        store.serverBusyUntil = nil
+                    }
+                    .padding(.top, 10)
                 }
+
+                Spacer(minLength: 8)
 
                 VoiceBars(level: store.micLevel, state: store.voiceState)
                     .frame(height: store.cameraEnabled ? 190 : 250)
@@ -68,7 +73,7 @@ struct VoiceView: View {
                 Text(hint)
                     .font(.system(size: 13.5))
                     .multilineTextAlignment(.center)
-                    .foregroundStyle(Theme.textDim)
+                    .foregroundStyle(store.cameraEnabled ? Color.white.opacity(0.8) : Theme.textDim)
                     .padding(.horizontal, 36)
                     .padding(.top, 6)
 
@@ -133,34 +138,53 @@ struct VoiceView: View {
 
     private var controls: some View {
         VStack(spacing: 12) {
-            Button {
-                store.toggleCamera()
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: store.cameraEnabled ? "video.fill" : "video")
-                        .font(.system(size: 13, weight: .bold))
-                    Text(store.cameraEnabled ? "Câmera ligada" : "Mostrar câmera")
-                        .font(.system(size: 14, weight: .semibold))
+            HStack(spacing: 10) {
+                Button {
+                    store.toggleCamera()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: store.cameraEnabled ? "video.fill" : "video")
+                            .font(.system(size: 13, weight: .bold))
+                        Text(store.cameraEnabled ? "Câmera ligada" : "Mostrar câmera")
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 12)
+                    .background(
+                        Capsule().fill(
+                            store.cameraEnabled
+                                ? Theme.accent.opacity(0.35)
+                                : Color.white.opacity(0.10)
+                        )
+                    )
+                    .overlay(
+                        Capsule().strokeBorder(
+                            store.cameraEnabled
+                                ? Theme.accent.opacity(0.65)
+                                : Theme.hairline
+                        )
+                    )
                 }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
-                .background(
-                    Capsule().fill(
-                        store.cameraEnabled
-                            ? Theme.accent.opacity(0.35)
-                            : Color.white.opacity(0.10)
-                    )
-                )
-                .overlay(
-                    Capsule().strokeBorder(
-                        store.cameraEnabled
-                            ? Theme.accent.opacity(0.65)
-                            : Theme.hairline
-                    )
-                )
+                .buttonStyle(PressableStyle())
+
+                Button {
+                    store.lookAtScreen()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "rectangle.on.rectangle")
+                            .font(.system(size: 13, weight: .bold))
+                        Text("Ver tela")
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 12)
+                    .background(Capsule().fill(Color.white.opacity(0.10)))
+                    .overlay(Capsule().strokeBorder(Theme.hairline))
+                }
+                .buttonStyle(PressableStyle())
             }
-            .buttonStyle(PressableStyle())
 
             HStack(spacing: 12) {
                 if store.voiceState == .speaking {

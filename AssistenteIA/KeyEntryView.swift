@@ -27,6 +27,10 @@ struct KeyEntryView: View {
                         .multilineTextAlignment(.center)
                         .foregroundStyle(Theme.textDim)
                         .padding(.horizontal, 24)
+
+                    Text("Criado por \(AppInfo.creator)")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.accent2)
                 }
                 .padding(.top, 46)
 
@@ -49,11 +53,11 @@ struct KeyEntryView: View {
 
     private var card: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label("Chave do Gemini", systemImage: "key.fill")
+            Label("Sua chave de acesso", systemImage: "key.fill")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.white)
 
-            Text("Cole aqui a sua chave de API do Google AI Studio. É gratuita para uso pessoal.")
+            Text("Cole aqui a sua chave de acesso. É gratuita para uso pessoal e fica só neste iPhone.")
                 .font(.system(size: 12.5))
                 .foregroundStyle(Theme.textDim)
 
@@ -135,7 +139,7 @@ struct KeyEntryView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "safari.fill")
                         .font(.system(size: 12))
-                    Text("Pegar minha chave no Google AI Studio")
+                    Text("Pegar minha chave de acesso")
                         .font(.system(size: 12.5, weight: .semibold))
                     Image(systemName: "arrow.up.right")
                         .font(.system(size: 10, weight: .bold))

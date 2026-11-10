@@ -21,6 +21,7 @@ final class ChatStore: ObservableObject {
     @Published var voiceState: VoiceState = .idle
     @Published var liveTranscript = ""
     @Published var cameraEnabled = false
+    @Published var serverBusyUntil: Date?
     @Published var availableModels: [String] = GeminiClient.chatFallbacks
 
     let speech = SpeechController()
@@ -162,7 +163,7 @@ final class ChatStore: ObservableObject {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !attachments.isEmpty, !isSending else { return }
         guard hasKey else {
-            banner = "Configure sua chave do Gemini para conversar."
+            banner = "Configure sua chave de acesso para conversar."
             return
         }
 
@@ -235,6 +236,11 @@ final class ChatStore: ObservableObject {
                     return
                 }
                 let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                if let server = error as? GeminiError, server.dailyQuota {
+                    DispatchQueue.main.async {
+                        self.serverBusyUntil = ServerStatus.nextReset
+                    }
+                }
                 self.fail(assistantID, message)
             }
         }
@@ -274,6 +280,7 @@ final class ChatStore: ObservableObject {
     private func complete(_ id: UUID, speakReply: Bool, interrupted: Bool = false) {
         DispatchQueue.main.async {
             self.isSending = false
+            self.serverBusyUntil = nil
 
             var text = ""
             if let conversation = self.conversations.first(where: { $0.messages.contains(where: { $0.id == id }) }),
@@ -427,8 +434,7 @@ final class ChatStore: ObservableObject {
         send(clean, speakReply: true, visionFrame: frame)
     }
 
-    func speak(_ raw: String) {
-        let text = stripMarkdown(raw)
+    func speak(_ raw: String) {        let text = stripMarkdown(raw)
         guard !text.isEmpty else {
             if voiceMode { listenAgain() }
             return
@@ -852,6 +858,44 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    // MARK: - Ver a tela do iPhone
+
+    /// Manda para o Joguim o print de tela mais recente da galeria.
+    /// É o jeito de ele "ver a tela" do celular sem extensão de transmissão.
+    func lookAtScreen() {
+        guard voiceMode, !isSending else { return }
+
+        voiceState = .thinking
+        banner = nil
+
+        Task {
+            let allowed = await ScreenshotSource.requestAccess()
+            guard allowed else {
+                await MainActor.run {
+                    self.voiceState = .listening
+                    self.banner = "Autorize o acesso às Fotos nos Ajustes do iPhone para eu ver a sua tela."
+                    self.listenAgain()
+                }
+                return
+            }
+
+            let shot = await ScreenshotSource.latest()
+            await MainActor.run {
+                guard let shot = shot else {
+                    self.voiceState = .listening
+                    self.banner = "Tire um print da tela (botão lateral + volume) e toque em Ver tela de novo."
+                    self.listenAgain()
+                    return
+                }
+                self.send(
+                    "O que está nesta captura de tela? Me diga o que importa, em 2 frases.",
+                    speakReply: true,
+                    visionFrame: shot
+                )
+            }
+        }
+    }
+
     // MARK: - Gerar / editar imagem
 
     /// Detecta pedidos de imagem para não mandar para o modelo de conversa.
@@ -900,7 +944,7 @@ final class ChatStore: ObservableObject {
         let prompt = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty, !isSending else { return }
         guard hasKey else {
-            banner = "Configure sua chave do Gemini para gerar imagens."
+            banner = "Configure sua chave de acesso para gerar imagens."
             return
         }
 
@@ -954,6 +998,11 @@ final class ChatStore: ObservableObject {
                 self.complete(assistantID, speakReply: false, interrupted: true)
             } catch {
                 let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                if let server = error as? GeminiError, server.dailyQuota {
+                    DispatchQueue.main.async {
+                        self.serverBusyUntil = ServerStatus.nextReset
+                    }
+                }
                 self.fail(assistantID, message)
             }
         }
