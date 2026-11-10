@@ -155,6 +155,12 @@ struct AppSettings: Codable, Equatable {
             blocks.append("Trate o usuário pelo nome (\(profile.name)) de vez em quando, sem exagero.")
         }
 
+        // Garante o nome novo mesmo quando a personalidade foi escrita antes
+        // da troca de nome (configurações antigas continuam válidas).
+        if systemPrompt.range(of: "Joguim", options: .caseInsensitive) == nil {
+            blocks.append("Seu nome é Joguim AI. Se a personalidade acima disser outro nome, use Joguim AI.")
+        }
+
         return blocks.joined(separator: "\n\n")
     }
 }
