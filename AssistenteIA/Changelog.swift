@@ -54,6 +54,42 @@ struct ChangelogRelease: Identifiable {
 enum Changelog {
     static let releases: [ChangelogRelease] = [
         ChangelogRelease(
+            version: "2.16",
+            headline: "Mais controle no dia a dia",
+            items: [
+                ChangelogItem(
+                    icon: "magnifyingglass",
+                    title: "Buscar nas conversas",
+                    detail: "Uma busca no topo da lista encontra qualquer conversa pelo título ou por uma palavra dita em qualquer mensagem."
+                ),
+                ChangelogItem(
+                    icon: "doc.on.doc",
+                    title: "Copiar, compartilhar e gerar de novo",
+                    detail: "Segure uma mensagem para copiar, compartilhar, ouvir ou pedir outra resposta. Também dá para apagar só aquela mensagem."
+                ),
+                ChangelogItem(
+                    icon: "arrow.up.left.and.arrow.down.right",
+                    title: "Imagens em tela cheia",
+                    detail: "Toque em qualquer imagem para abrir inteira, com zoom de pinça, dois toques e botões de salvar e compartilhar."
+                ),
+                ChangelogItem(
+                    icon: "textformat.size",
+                    title: "Texto do seu tamanho",
+                    detail: "Um controle nos Ajustes muda o tamanho do texto das mensagens, com prévia na hora."
+                ),
+                ChangelogItem(
+                    icon: "waveform",
+                    title: "Voz no ritmo que você quiser",
+                    detail: "Velocidade da voz do iPhone ajustável, com botões para ouvir a voz natural e a voz do iPhone antes de escolher."
+                ),
+                ChangelogItem(
+                    icon: "faceid",
+                    title: "Bloqueio com Face ID",
+                    detail: "Opcional: o app pede Face ID ao abrir, para ninguém ver suas conversas. Também há um botão para apagar tudo de uma vez."
+                )
+            ]
+        ),
+        ChangelogRelease(
             version: "2.15",
             headline: "As vozes naturais voltaram",
             items: [

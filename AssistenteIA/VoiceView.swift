@@ -79,6 +79,17 @@ struct VoiceView: View {
                     .padding(.horizontal, 36)
                     .padding(.top, 6)
 
+                if store.voiceState == .speaking, !store.spokenCaption.isEmpty {
+                    Text(store.spokenCaption)
+                        .font(.system(size: 14.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(3)
+                        .padding(.horizontal, 28)
+                        .padding(.top, 10)
+                        .transition(.opacity)
+                }
+
                 transcript
 
                 Spacer(minLength: 10)

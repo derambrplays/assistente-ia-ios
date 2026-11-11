@@ -17,11 +17,13 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>2.15</string>
+    <string>2.16</string>
     <key>CFBundleVersion</key>
-    <string>22</string>
+    <string>23</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <key>NSFaceIDUsageDescription</key>
+    <string>Para desbloquear o Joguim AI e proteger suas conversas.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Para você conversar por voz com o assistente.</string>
     <key>NSSpeechRecognitionUsageDescription</key>

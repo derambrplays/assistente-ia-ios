@@ -11,6 +11,11 @@ struct SettingsView: View {
     @State private var showWhatsNew = false
     @State private var diagLines: [String] = []
     @State private var diagRunning = false
+    @State private var showClearConfirm = false
+
+    @AppStorage("speechRate") private var speechRate: Double = 0.48
+    @AppStorage("chatTextSize") private var chatTextSize: Double = 15.5
+    @AppStorage("appLockEnabled") private var appLockEnabled = false
 
     private var models: [String] {
         var list = store.availableModels
@@ -31,6 +36,8 @@ struct SettingsView: View {
                     locationCard
                     personalityCard
                     voiceCard
+                    appearanceCard
+                    privacyCard
                     diagnosticsCard
                     whatsNewCard
                     aboutCard
@@ -57,6 +64,15 @@ struct SettingsView: View {
         .sheet(isPresented: $showWhatsNew) {
             WhatsNewView()
                 .environmentObject(store)
+        }
+        .alert("Apagar todas as conversas?", isPresented: $showClearConfirm) {
+            Button("Cancelar", role: .cancel) {}
+            Button("Apagar", role: .destructive) {
+                store.clearAllConversations()
+                dismiss()
+            }
+        } message: {
+            Text("Isso remove todas as conversas e os anexos deste iPhone. A sua chave é mantida.")
         }
     }
 
@@ -463,20 +479,48 @@ struct SettingsView: View {
                     .fill(Color.white.opacity(0.04))
             )
 
-            Button {
-                store.speak("Oi! Eu sou seu assistente. Como posso ajudar?")
-            } label: {
-                Label("Testar voz", systemImage: "play.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(
-                        Capsule().fill(Color.white.opacity(0.08))
-                    )
-                    .overlay(Capsule().strokeBorder(Theme.hairline))
+            VStack(alignment: .leading, spacing: 7) {
+                HStack {
+                    Text("Velocidade da voz do iPhone")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(.white)
+                    Spacer()
+                    Text(speechRate < 0.46 ? "Devagar" : (speechRate > 0.54 ? "Rápida" : "Normal"))
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textDim)
+                }
+
+                Slider(value: $speechRate, in: 0.4...0.6, step: 0.02)
+                    .tint(Theme.accent)
             }
-            .buttonStyle(PressableStyle())
+
+            HStack(spacing: 8) {
+                Button {
+                    store.speak("Oi! Eu sou seu assistente. Como posso ajudar?")
+                } label: {
+                    Label("Voz natural", systemImage: "play.fill")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(Capsule().fill(Color.white.opacity(0.08)))
+                        .overlay(Capsule().strokeBorder(Theme.hairline))
+                }
+                .buttonStyle(PressableStyle())
+
+                Button {
+                    store.previewOfflineVoice()
+                } label: {
+                    Label("Voz do iPhone", systemImage: "play.fill")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(Capsule().fill(Color.white.opacity(0.08)))
+                        .overlay(Capsule().strokeBorder(Theme.hairline))
+                }
+                .buttonStyle(PressableStyle())
+            }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -492,6 +536,73 @@ struct SettingsView: View {
                 UIApplication.shared.open(fallback)
             }
         }
+    }
+
+    // MARK: - Aparência
+
+    private var appearanceCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Aparência", systemImage: "textformat.size")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+
+            Text("Tamanho do texto das mensagens.")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textDim)
+
+            HStack(spacing: 10) {
+                Text("A")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.textFaint)
+                Slider(value: $chatTextSize, in: 13...21, step: 0.5)
+                    .tint(Theme.accent)
+                Text("A")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(Theme.textFaint)
+            }
+
+            Text("Assim ficam as mensagens na conversa.")
+                .font(.system(size: CGFloat(chatTextSize)))
+                .foregroundStyle(.white)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(Color.white.opacity(0.05))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(Theme.hairline)
+                )
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard()
+    }
+
+    // MARK: - Privacidade
+
+    private var privacyCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Privacidade", systemImage: "faceid")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+
+            Toggle(isOn: $appLockEnabled) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Pedir Face ID ao abrir")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                    Text("Protege suas conversas se alguém pegar o iPhone.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textFaint)
+                }
+            }
+            .tint(Theme.accent)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard()
     }
 
     // MARK: - Diagnóstico
@@ -616,6 +727,27 @@ struct SettingsView: View {
             Text("Sua chave e suas conversas ficam apenas neste aparelho.")
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.textFaint)
+
+            Divider()
+                .overlay(Theme.hairline)
+                .padding(.vertical, 2)
+
+            HStack(spacing: 8) {
+                Text("Anexos guardados: \(store.storageText)")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textDim)
+
+                Spacer(minLength: 8)
+
+                Button {
+                    showClearConfirm = true
+                } label: {
+                    Text("Apagar conversas")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.danger)
+                }
+                .buttonStyle(.plain)
+            }
 
             Text(screenInfo)
                 .font(.system(size: 10, design: .monospaced))

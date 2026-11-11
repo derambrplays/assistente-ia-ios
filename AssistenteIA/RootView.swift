@@ -2,10 +2,13 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var store: ChatStore
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showSettings = false
     @State private var showConversations = false
     @State private var showWhatsNew = false
+    @StateObject private var appLock = AppLock()
     @AppStorage("lastSeenBuild") private var lastSeenBuild = ""
+    @AppStorage("appLockEnabled") private var appLockEnabled = false
 
     private var onboardingBinding: Binding<Bool> {
         Binding(
@@ -55,9 +58,23 @@ struct RootView: View {
             WhatsNewView()
                 .environmentObject(store)
         }
-        .onAppear { checkWhatsNew() }
+        .onAppear {
+            checkWhatsNew()
+            if appLockEnabled { appLock.lock() }
+        }
         .onChange(of: store.hasKey) { _ in checkWhatsNew() }
         .onChange(of: store.settings.onboardingDone) { _ in checkWhatsNew() }
+        .onChange(of: scenePhase) { phase in
+            if phase == .background, appLockEnabled {
+                appLock.lock()
+            }
+        }
+        .overlay {
+            if appLockEnabled && appLock.locked {
+                LockScreenView { appLock.unlock() }
+                    .transition(.opacity)
+            }
+        }
         .fullScreenCover(isPresented: $store.voiceMode) {
             VoiceView()
                 .environmentObject(store)

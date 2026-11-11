@@ -94,6 +94,9 @@ final class AudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSp
         case speech(String)
     }
 
+    /// Ritmo da voz do iPhone (0,4 = devagar, 0,6 = rápido). Ajustável nos Ajustes.
+    var offlineRate: Double = 0.48
+
     private var queue: [Item] = []
     private var current: AVAudioPlayer?
     private var activeSpeech: AVSpeechSynthesizer?
@@ -227,7 +230,10 @@ final class AudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSp
 
             let utterance = AVSpeechUtterance(string: text)
             utterance.voice = AudioPlayer.offlineVoice
-            utterance.rate = 0.48
+            // Ritmo escolhido nos Ajustes (0,4 devagar — 0,6 rápido).
+            let stored = UserDefaults.standard.double(forKey: "speechRate")
+            let rate = stored > 0 ? stored : offlineRate
+            utterance.rate = Float(min(0.6, max(0.4, rate)))
             utterance.pitchMultiplier = 1.0
             synth.speak(utterance)
         }

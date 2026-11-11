@@ -107,9 +107,12 @@ struct ChatView: View {
                     }
 
                     ForEach(store.messages) { message in
-                        MessageRow(message: message) {
-                            store.speak(message.text)
-                        }
+                        MessageRow(
+                            message: message,
+                            onSpeak: { store.speak(message.text) },
+                            onRegenerate: { store.retry(from: message.id) },
+                            onDelete: { store.deleteMessage(message.id) }
+                        )
                         .id(message.id)
                     }
 

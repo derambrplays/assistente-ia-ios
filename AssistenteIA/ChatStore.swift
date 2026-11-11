@@ -23,6 +23,8 @@ final class ChatStore: ObservableObject {
     @Published var cameraEnabled = false
     @Published var serverBusyUntil: Date?
     @Published var availableModels: [String] = GeminiClient.chatFallbacks
+    /// Trecho que a assistente está falando agora (legenda no modo voz).
+    @Published var spokenCaption = ""
 
     let speech = SpeechController()
     let player = AudioPlayer()
@@ -170,6 +172,117 @@ final class ChatStore: ObservableObject {
             activeID = conversations.first?.id
         }
         save()
+    }
+
+    func rename(_ id: UUID, to raw: String) {
+        let title = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty,
+              let index = conversations.firstIndex(where: { $0.id == id }) else { return }
+        conversations[index].title = String(title.prefix(60))
+        conversations[index].updatedAt = Date()
+        save()
+    }
+
+    /// Apaga todas as conversas e os arquivos anexados. A chave é mantida.
+    func clearAllConversations() {
+        for conversation in conversations {
+            for message in conversation.messages {
+                for attachment in message.attachments {
+                    AttachmentStore.remove(attachment)
+                }
+            }
+        }
+        let fresh = Conversation()
+        conversations = [fresh]
+        activeID = fresh.id
+        save()
+    }
+
+    /// Texto pronto para compartilhar uma conversa inteira.
+    func exportText(for conversation: Conversation) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "dd/MM/yyyy HH:mm"
+
+        var lines = ["Joguim AI — \(conversation.title)", ""]
+        for message in conversation.messages {
+            let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty || !message.attachments.isEmpty else { continue }
+
+            let who = message.role == .user ? "Você" : "Joguim"
+            lines.append("[\(formatter.string(from: message.date))] \(who):")
+            if !text.isEmpty { lines.append(text) }
+            for attachment in message.attachments {
+                lines.append("(anexo: \(attachment.name))")
+            }
+            if !message.sources.isEmpty {
+                lines.append("Fontes:")
+                for source in message.sources {
+                    lines.append("- \(source.title) \(source.uri)")
+                }
+            }
+            lines.append("")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Tamanho dos anexos guardados neste iPhone.
+    var storageText: String {
+        let bytes = conversations.reduce(0) { partial, conversation in
+            partial + conversation.messages.reduce(0) { inner, message in
+                inner + message.attachments.reduce(0) { $0 + $1.byteCount }
+            }
+        }
+        return ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+    }
+
+    /// Apaga uma mensagem (e o arquivo anexado a ela).
+    func deleteMessage(_ id: UUID) {
+        guard let conversationIndex = conversations.firstIndex(where: {
+                  $0.messages.contains(where: { $0.id == id })
+              }),
+              let messageIndex = conversations[conversationIndex].messages.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        for attachment in conversations[conversationIndex].messages[messageIndex].attachments {
+            AttachmentStore.remove(attachment)
+        }
+        conversations[conversationIndex].messages.remove(at: messageIndex)
+        conversations[conversationIndex].updatedAt = Date()
+        save()
+    }
+
+    /// "Gerar de novo": volta até a pergunta e refaz a resposta.
+    /// Funciona também em uma mensagem do usuário (reenvia a partir dela).
+    func retry(from messageID: UUID) {
+        guard !isSending else { return }
+        guard let conversationIndex = conversations.firstIndex(where: {
+                  $0.messages.contains(where: { $0.id == messageID })
+              }),
+              let index = conversations[conversationIndex].messages.firstIndex(where: { $0.id == messageID }) else {
+            return
+        }
+
+        let conversation = conversations[conversationIndex]
+        var userIndex = index
+        if conversation.messages[index].role == .assistant {
+            guard let previous = conversation.messages[..<index].lastIndex(where: { $0.role == .user }) else {
+                return
+            }
+            userIndex = previous
+        }
+
+        let user = conversation.messages[userIndex]
+        let hasText = !user.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard hasText || !user.attachments.isEmpty else { return }
+
+        activeID = conversation.id
+        if let target = conversations.firstIndex(where: { $0.id == conversation.id }) {
+            let end = conversations[target].messages.count
+            conversations[target].messages.removeSubrange(userIndex..<end)
+        }
+        save()
+
+        send(user.text, attachments: user.attachments, speakReply: voiceMode)
     }
 
     // MARK: - Enviar
@@ -540,6 +653,18 @@ final class ChatStore: ObservableObject {
         finishSpeechStream(fallback: text)
     }
 
+    /// Toca uma frase com a voz do iPhone, para a pessoa comparar o ritmo.
+    func previewOfflineVoice() {
+        cancelSpeechPipeline()
+        voiceState = .speaking
+        player.speakOffline(
+            "Oi! Esta é a voz do iPhone. Posso falar mais devagar ou mais rápido, você escolhe.",
+            voiceMode: false
+        ) { [weak self] in
+            self?.voiceState = .idle
+        }
+    }
+
     // MARK: - Fala em fluxo (primeira frase antes da resposta terminar)
 
     private func beginSpeechPipeline() {
@@ -573,6 +698,7 @@ final class ChatStore: ObservableObject {
         speechScheduled = 0
         speechStarted = false
         lastSpeechFetch = nil
+        spokenCaption = ""
         player.stop()
     }
 
@@ -620,6 +746,7 @@ final class ChatStore: ObservableObject {
         let text = stripMarkdown(raw)
         guard !text.isEmpty else { return }
 
+        spokenCaption = text
         speechChunkCount += 1
         speechScheduled += 1
         let generation = speechGeneration
@@ -804,6 +931,7 @@ final class ChatStore: ObservableObject {
 
     private func afterSpeech() {
         speech.stop()
+        spokenCaption = ""
 
         if voiceMode {
             voiceState = .listening
