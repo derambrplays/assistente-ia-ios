@@ -54,6 +54,27 @@ struct ChangelogRelease: Identifiable {
 enum Changelog {
     static let releases: [ChangelogRelease] = [
         ChangelogRelease(
+            version: "2.11",
+            headline: "Áudio entendido de verdade e imagens explicadas",
+            items: [
+                ChangelogItem(
+                    icon: "waveform",
+                    title: "Áudio agora é entendido sempre",
+                    detail: "O áudio é transcrito antes da resposta e a transcrição fica salva na conversa. Assim o modelo responde ao que você falou, sem dizer que é um assistente só de texto."
+                ),
+                ChangelogItem(
+                    icon: "photo",
+                    title: "Imagens: o motivo real da falha",
+                    detail: "Quando a geração de imagem não está liberada na chave, o app diz isso claramente em vez de culpar o modelo, e para de tentar vários modelos à toa."
+                ),
+                ChangelogItem(
+                    icon: "clock",
+                    title: "Sem gastar cota sem você",
+                    detail: "O teste automático de imagem roda só uma vez por atualização; o teste completo continua no botão Diagnóstico dos Ajustes."
+                )
+            ]
+        ),
+        ChangelogRelease(
             version: "2.10",
             headline: "Sem voz de robô e entendendo áudio",
             items: [

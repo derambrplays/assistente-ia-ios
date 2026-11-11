@@ -887,7 +887,12 @@ enum GeminiClient {
         ]
         let bodyData = try JSONSerialization.data(withJSONObject: body)
 
-        for model in ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-flash-lite-latest"] {
+        for model in [
+            "gemini-3.5-transcribe",
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-flash-lite",
+            "gemini-flash-lite-latest"
+        ] {
             guard let url = URL(string: "\(apiBase)/models/\(model):generateContent") else { continue }
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
@@ -1162,6 +1167,9 @@ enum GeminiClient {
         // Guarda o erro mais informativo: um 404 do último modelo da lista não
         // pode esconder um 429 de cota que veio antes.
         var bestError: GeminiError?
+        // Quando o plano não inclui imagem, todos os modelos respondem igual.
+        // Duas respostas iguais já bastam: não vale gastar o resto da lista.
+        var planBlocked = 0
 
         for candidate in candidates where !isExhausted(candidate) {
             guard let url = URL(string: "\(apiBase)/models/\(candidate):generateContent") else { continue }
@@ -1190,6 +1198,11 @@ enum GeminiClient {
                     lastError = error
                     if bestError == nil || (bestError?.status == 404 && error.status != 404) {
                         bestError = error
+                    }
+
+                    if http.statusCode == 429 && isPlanBlocked(raw) {
+                        planBlocked += 1
+                        if planBlocked >= 2 { break }
                     }
 
                     if error.retryable || http.statusCode == 404 || http.statusCode == 400 {
@@ -1264,22 +1277,28 @@ enum GeminiClient {
         throw lastError
     }
 
+    /// O plano da chave não inclui imagem (todos os modelos respondem igual).
+    private static func isPlanBlocked(_ raw: String) -> Bool {
+        let lower = raw.lowercased()
+        return lower.contains("billing")
+            || lower.contains("plan")
+            || lower.contains("limit: 0")
+            || lower.contains("free_tier")
+            || lower.contains("free tier")
+            || lower.contains("per_day")
+            || lower.contains("perday")
+    }
+
     /// Mensagem clara para o que realmente aconteceu ao gerar imagem.
     private static func imageErrorMessage(status: Int, raw: String) -> String {
-        let lower = raw.lowercased()
-
-        if status == 429 || lower.contains("resource_exhausted") {
-            if lower.contains("limit: 0")
-                || lower.contains("free_tier")
-                || lower.contains("free tier")
-                || lower.contains("per_day")
-                || lower.contains("perday") {
-                return "A sua chave não tem cota para gerar imagens neste plano. A geração de imagens precisa estar liberada na conta."
+        if status == 429 || raw.lowercased().contains("resource_exhausted") {
+            if isPlanBlocked(raw) {
+                return "A sua chave não tem cota para gerar imagens no plano atual. O plano gratuito não inclui geração de imagens; é preciso ativar o faturamento na conta."
             }
             return "O limite de geração de imagens foi atingido agora. Tente de novo em alguns minutos."
         }
 
-        if status == 403 || lower.contains("permission_denied") {
+        if status == 403 || raw.lowercased().contains("permission_denied") {
             return "A sua chave não tem permissão para gerar imagens."
         }
 

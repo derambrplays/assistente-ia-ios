@@ -202,9 +202,10 @@ final class ChatStore: ObservableObject {
             finalAttachments.append(frame)
         }
 
+        let userID = UUID()
         mutateActive { conversation in
             conversation.messages.append(
-                ChatMessage(role: .user, text: text, attachments: finalAttachments)
+                ChatMessage(id: userID, role: .user, text: text, attachments: finalAttachments)
             )
         }
 
@@ -237,7 +238,9 @@ final class ChatStore: ObservableObject {
             guard let self = self else { return }
             do {
                 // Áudio enviado é transcrito antes: assim qualquer modelo
-                // entende o que foi falado, mesmo os mais leves.
+                // entende o que foi falado, mesmo os mais leves. A transcrição
+                // fica salva na conversa e o áudio sai do pedido (nem todo
+                // modelo aceita áudio direto, e um 400 derrubaria a resposta).
                 var prepared = history
                 let audioAttachments = finalAttachments.filter { $0.mimeType.hasPrefix("audio/") }
                 if !audioAttachments.isEmpty {
@@ -253,9 +256,24 @@ final class ChatStore: ObservableObject {
                             notes.append("Transcrição do áudio \"\(attachment.name)\": \(clean)")
                         }
                     }
-                    if !notes.isEmpty,
-                       let index = prepared.lastIndex(where: { $0.role == .user }) {
-                        prepared[index].text += "\n\n" + notes.joined(separator: "\n\n")
+
+                    if !notes.isEmpty {
+                        let note = notes.joined(separator: "\n\n")
+                        if let index = prepared.lastIndex(where: { $0.role == .user }) {
+                            prepared[index].text = Self.joined(prepared[index].text, note)
+                            prepared[index].attachments.removeAll { $0.mimeType.hasPrefix("audio/") }
+                        }
+                        DispatchQueue.main.async {
+                            self.mutateMessage(userID) { message in
+                                message.text = Self.joined(message.text, note)
+                            }
+                        }
+                    } else {
+                        // Sem transcrição o áudio continua no pedido; se ainda
+                        // assim não der, avisa em vez de fingir que entendeu.
+                        DispatchQueue.main.async {
+                            self.banner = "Não consegui entender o áudio. Tente falar de novo ou escrever."
+                        }
                     }
                 }
 
@@ -1151,6 +1169,13 @@ final class ChatStore: ObservableObject {
         conversations = state.conversations
         activeID = state.activeID
         settings = state.settings
+    }
+
+    /// Junta um texto novo ao existente sem deixar linhas vazias sobrando.
+    private static func joined(_ text: String, _ extra: String) -> String {
+        let base = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if base.isEmpty { return extra }
+        return base + "\n\n" + extra
     }
 
     private func mutateActive(_ block: (inout Conversation) -> Void) {

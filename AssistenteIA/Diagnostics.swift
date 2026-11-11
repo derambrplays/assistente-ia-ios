@@ -80,8 +80,9 @@ enum Diagnostics {
         }
 
         // Teste de verdade, com um pedido mínimo: é o único jeito de saber se
-        // a chave pode mesmo gerar imagem.
-        for model in image.prefix(2) {
+        // a chave pode mesmo gerar imagem. Quatro modelos bastam para saber se
+        // o bloqueio é da chave (todos falham igual) ou de um modelo só.
+        for model in image.prefix(4) {
             let status = await GeminiClient.probeImageGenerate(model)
             record("imagem gerar \(model) -> \(status)")
         }
