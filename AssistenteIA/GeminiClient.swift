@@ -183,6 +183,32 @@ enum GeminiClient {
         }
     }
 
+    /// Testa se um modelo de imagem existe/está liberado, sem gastar imagem:
+    /// manda um pedido incompleto de propósito. Modelo válido responde 400;
+    /// modelo inexistente ou bloqueado responde 404.
+    static func probeImageModel(_ model: String) async -> String {
+        guard let url = URL(string: "\(apiBase)/models/\(model):generateContent") else {
+            return "endereço inválido"
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        applyHeaders(&request, key: apiKey)
+
+        let body: [String: Any] = ["contents": [] as [[String: Any]]]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { return "resposta inválida" }
+            let raw = String(data: data, encoding: .utf8) ?? ""
+            return "\(http.statusCode) \(shortReason(raw))"
+        } catch {
+            return "rede: \(error.localizedDescription)"
+        }
+    }
+
     /// Testa a voz com uma palavra.
     static func probeVoice() async -> String {
         do {
@@ -1084,6 +1110,7 @@ enum GeminiClient {
 
                 if http.statusCode != 200 {
                     let raw = String(data: data, encoding: .utf8) ?? ""
+                    Diagnostics.record("imagem \(candidate) -> \(http.statusCode) \(shortReason(raw))")
                     if http.statusCode == 429 && isDailyQuota(raw) { markExhausted(candidate) }
 
                     let base = friendly(http.statusCode)

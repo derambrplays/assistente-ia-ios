@@ -47,6 +47,7 @@ final class ChatStore: ObservableObject {
     private var speechScheduled = 0
     private var speechStarted = false
     private var speechChunkCount = 0
+    private var speechOfflineFallback = false
     private var lastSpeechFetch: Task<Void, Never>?
 
     init() {
@@ -501,6 +502,7 @@ final class ChatStore: ObservableObject {
         speechScheduled = 0
         speechStarted = false
         speechChunkCount = 0
+        speechOfflineFallback = false
         lastSpeechFetch = nil
 
         let generation = speechGeneration
@@ -564,7 +566,7 @@ final class ChatStore: ObservableObject {
         speechScheduled += 1
         let generation = speechGeneration
 
-        if !settings.naturalVoice {
+        if !settings.naturalVoice || speechOfflineFallback {
             player.enqueueSpeech(text)
             markSpeechStarted()
             return
@@ -577,23 +579,35 @@ final class ChatStore: ObservableObject {
         let task = Task { [weak self] in
             await previous?.value
             guard let self = self else { return }
-            do {
-                let data = try await GeminiClient.speak(text: text, voice: voice)
-                await MainActor.run {
-                    guard generation == self.speechGeneration else { return }
-                    self.speechPending -= 1
-                    self.player.enqueue(data: data)
-                    self.markSpeechStarted()
-                    self.maybeEndSpeech()
+
+            // Duas tentativas: um tropeço de rede não muda a voz no meio da frase.
+            var audio: Data?
+            for attempt in 0..<2 {
+                do {
+                    audio = try await GeminiClient.speak(text: text, voice: voice)
+                    break
+                } catch {
+                    if attempt == 0 {
+                        try? await Task.sleep(nanoseconds: 350_000_000)
+                    }
                 }
-            } catch {
-                await MainActor.run {
-                    guard generation == self.speechGeneration else { return }
-                    self.speechPending -= 1
+            }
+
+            await MainActor.run {
+                guard generation == self.speechGeneration else { return }
+                self.speechPending -= 1
+
+                if let audio = audio {
+                    self.player.enqueue(data: audio)
+                } else {
+                    // Se a voz natural falhar de vez, o resto desta resposta
+                    // continua na voz do iPhone — sem alternar no meio.
+                    self.speechOfflineFallback = true
                     self.player.enqueueSpeech(text)
-                    self.markSpeechStarted()
-                    self.maybeEndSpeech()
                 }
+
+                self.markSpeechStarted()
+                self.maybeEndSpeech()
             }
         }
         lastSpeechFetch = task

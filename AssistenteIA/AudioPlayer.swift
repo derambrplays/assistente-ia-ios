@@ -8,6 +8,10 @@ import Combine
 final class AudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate {
     @Published private(set) var isPlaying = false
 
+    /// Uma única voz do iPhone para toda a sessão: evita que o timbre mude
+    /// no meio de uma resposta.
+    static let offlineVoice = AVSpeechSynthesisVoice(language: "pt-BR")
+
     private enum Item {
         case audio(Data)
         case speech(String)
@@ -145,7 +149,7 @@ final class AudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSp
             isPlaying = true
 
             let utterance = AVSpeechUtterance(string: text)
-            utterance.voice = AVSpeechSynthesisVoice(language: "pt-BR")
+            utterance.voice = AudioPlayer.offlineVoice
             utterance.rate = 0.5
             utterance.pitchMultiplier = 1.0
             synth.speak(utterance)

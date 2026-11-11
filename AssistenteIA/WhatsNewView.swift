@@ -14,7 +14,8 @@ struct WhatsNewView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     header
 
-                    ForEach(Array(Changelog.releases.enumerated()), id: \.element.id) { index, release in
+                    // Só a versão atual e a anterior: nada de arrastar histórico antigo.
+                    ForEach(Array(Changelog.releases.prefix(2).enumerated()), id: \.element.id) { index, release in
                         releaseCard(release, isLatest: index == 0)
                     }
 

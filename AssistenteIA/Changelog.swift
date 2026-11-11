@@ -54,6 +54,22 @@ struct ChangelogRelease: Identifiable {
 enum Changelog {
     static let releases: [ChangelogRelease] = [
         ChangelogRelease(
+            version: "2.8",
+            headline: "Uma voz só, do começo ao fim",
+            items: [
+                ChangelogItem(
+                    icon: "waveform",
+                    title: "Sem trocar de voz no meio",
+                    detail: "Se a voz natural falhar em um trecho, ele tenta de novo. Se ainda assim não der, o resto da resposta continua na mesma voz, sem alternar."
+                ),
+                ChangelogItem(
+                    icon: "sparkles.rectangle.stack",
+                    title: "Novidades mais curtas",
+                    detail: "A tela agora mostra só a versão atual e a anterior, em vez de arrastar o histórico inteiro."
+                )
+            ]
+        ),
+        ChangelogRelease(
             version: "2.7",
             headline: "Escuta e fala do jeito certo",
             items: [
