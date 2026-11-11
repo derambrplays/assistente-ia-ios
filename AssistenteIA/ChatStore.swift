@@ -48,6 +48,7 @@ final class ChatStore: ObservableObject {
     private var speechStarted = false
     private var speechChunkCount = 0
     private var speechOfflineFallback = false
+    private var bargeInHandled = false
     private var lastSpeechFetch: Task<Void, Never>?
 
     init() {
@@ -503,6 +504,7 @@ final class ChatStore: ObservableObject {
         speechStarted = false
         speechChunkCount = 0
         speechOfflineFallback = false
+        bargeInHandled = false
         lastSpeechFetch = nil
 
         let generation = speechGeneration
@@ -533,7 +535,9 @@ final class ChatStore: ObservableObject {
     }
 
     private func finishSpeechStream(fallback: String) {
-        guard speechStreaming || speechStreamDone else { return }
+        // Só uma vez por resposta: repetir aqui encerrava a fila de áudio cedo
+        // e a fala parava no meio.
+        guard speechStreaming else { return }
         speechStreaming = false
         speechStreamDone = true
 
@@ -580,15 +584,16 @@ final class ChatStore: ObservableObject {
             await previous?.value
             guard let self = self else { return }
 
-            // Duas tentativas: um tropeço de rede não muda a voz no meio da frase.
+            // Três tentativas: um tropeço de rede não muda a voz no meio da frase.
             var audio: Data?
-            for attempt in 0..<2 {
+            for attempt in 0..<3 {
                 do {
                     audio = try await GeminiClient.speak(text: text, voice: voice)
                     break
                 } catch {
-                    if attempt == 0 {
-                        try? await Task.sleep(nanoseconds: 350_000_000)
+                    if attempt < 2 {
+                        let wait: UInt64 = attempt == 0 ? 300_000_000 : 800_000_000
+                        try? await Task.sleep(nanoseconds: wait)
                     }
                 }
             }
@@ -597,7 +602,7 @@ final class ChatStore: ObservableObject {
                 guard generation == self.speechGeneration else { return }
                 self.speechPending -= 1
 
-                if let audio = audio {
+                if let audio = audio, !self.speechOfflineFallback {
                     self.player.enqueue(data: audio)
                 } else {
                     // Se a voz natural falhar de vez, o resto desta resposta
@@ -746,20 +751,30 @@ final class ChatStore: ObservableObject {
     }
 
     private func beginBargeInListening() {
-        speech.onPartial = { [weak self] text in
+        // O microfone escuta enquanto o alto-falante fala, então ele também
+        // ouve a própria assistente. Só interrompemos quando o que foi ouvido
+        // é claramente uma fala nova — nunca um eco da resposta.
+        let startedAt = Date()
+
+        let consider: (String) -> Void = { [weak self] text in
             guard let self = self else { return }
+            guard !self.bargeInHandled else { return }
+
+            // Dá tempo de a fala começar: o começo do áudio gera eco.
+            guard Date().timeIntervalSince(startedAt) >= 1.0 else { return }
+
             let heard = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard heard.split(separator: " ").count >= 2 else { return }
-            if self.overlaps(heard, self.lastSpoken) { return }
+            let words = heard.split(separator: " ").count
+            guard words >= 3 else { return }
+
+            guard !self.looksLikeEcho(heard, self.lastSpoken) else { return }
+
+            self.bargeInHandled = true
             self.interrupt()
         }
-        speech.onFinal = { [weak self] text in
-            guard let self = self else { return }
-            let heard = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard heard.split(separator: " ").count >= 2 else { return }
-            if self.overlaps(heard, self.lastSpoken) { return }
-            self.interrupt()
-        }
+
+        speech.onPartial = consider
+        speech.onFinal = consider
         speech.onError = { _ in }
 
         speech.start(silence: 30)
@@ -784,7 +799,9 @@ final class ChatStore: ObservableObject {
         listenAgain()
     }
 
-    private func overlaps(_ first: String, _ second: String) -> Bool {
+    /// `true` quando o que o microfone ouviu é, na verdade, a voz do próprio
+    /// app saindo no alto-falante (ou uma transcrição ruim dela).
+    private func looksLikeEcho(_ heard: String, _ spoken: String) -> Bool {
         func words(_ text: String) -> Set<String> {
             let folded = text
                 .lowercased()
@@ -793,12 +810,15 @@ final class ChatStore: ObservableObject {
             return Set(pieces.filter { $0.count > 1 })
         }
 
-        let firstWords = words(first)
-        let secondWords = words(second)
-        guard !firstWords.isEmpty else { return true }
+        let heardWords = words(heard)
+        let spokenWords = words(spoken)
+        guard !heardWords.isEmpty else { return true }
+        guard !spokenWords.isEmpty else { return false }
 
-        let common = firstWords.intersection(secondWords).count
-        return Double(common) / Double(firstWords.count) >= 0.7
+        let common = heardWords.intersection(spokenWords).count
+        // Basta um terço das palavras coincidir para tratar como eco: fala
+        // humana de verdade quase nunca repete o texto que está sendo lido.
+        return Double(common) / Double(heardWords.count) >= 0.34
     }
 
     // MARK: - Memória

@@ -8,9 +8,54 @@ import Combine
 final class AudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate {
     @Published private(set) var isPlaying = false
 
-    /// Uma única voz do iPhone para toda a sessão: evita que o timbre mude
-    /// no meio de uma resposta.
-    static let offlineVoice = AVSpeechSynthesisVoice(language: "pt-BR")
+    /// Uma única voz do iPhone para toda a sessão.
+    ///
+    /// `AVSpeechSynthesisVoice(language:)` devolve a voz padrão escolhida pelo
+    /// usuário no aparelho — que pode ser masculina. Como a voz natural é
+    /// feminina, isso fazia a assistente "trocar de voz" entre uma resposta e
+    /// outra. Aqui escolhemos sempre a melhor voz feminina pt-BR instalada.
+    static let offlineVoice: AVSpeechSynthesisVoice? = {
+        let all = AVSpeechSynthesisVoice.speechVoices()
+
+        func score(_ voice: AVSpeechSynthesisVoice) -> Int {
+            var points = 0
+
+            if voice.language == "pt-BR" {
+                points += 100
+            } else if voice.language.hasPrefix("pt") {
+                points += 40
+            } else {
+                points -= 100
+            }
+
+            let name = voice.name.lowercased()
+            let femaleNames = [
+                "luciana", "fernanda", "camila", "joana", "maria",
+                "ana", "catarina", "ines", "inês", "helena"
+            ]
+            if femaleNames.contains(where: { name.contains($0) }) {
+                points += 30
+            }
+            if voice.gender == .female {
+                points += 20
+            }
+
+            switch voice.quality {
+            case .premium:
+                points += 6
+            case .enhanced:
+                points += 4
+            default:
+                points += 2
+            }
+
+            return points
+        }
+
+        let portuguese = all.filter { $0.language.hasPrefix("pt") }
+        let best = portuguese.max(by: { score($0) < score($1) })
+        return best ?? AVSpeechSynthesisVoice(language: "pt-BR")
+    }()
 
     private enum Item {
         case audio(Data)
@@ -173,26 +218,35 @@ final class AudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSp
     // MARK: - Delegates
 
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        current = nil
-        playNext()
+        // Os delegates podem chegar fora da main; a fila só pode ser mexida nela.
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.current === player else { return }
+            self.current = nil
+            self.playNext()
+        }
     }
 
     func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
-        current = nil
-        playNext()
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.current === player else { return }
+            self.current = nil
+            self.playNext()
+        }
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        if synthesizer === activeSpeech {
-            activeSpeech = nil
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, synthesizer === self.activeSpeech else { return }
+            self.activeSpeech = nil
+            self.playNext()
         }
-        playNext()
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        if synthesizer === activeSpeech {
-            activeSpeech = nil
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, synthesizer === self.activeSpeech else { return }
+            self.activeSpeech = nil
+            self.playNext()
         }
-        playNext()
     }
 }

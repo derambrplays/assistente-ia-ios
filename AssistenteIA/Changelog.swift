@@ -54,6 +54,22 @@ struct ChangelogRelease: Identifiable {
 enum Changelog {
     static let releases: [ChangelogRelease] = [
         ChangelogRelease(
+            version: "2.9",
+            headline: "A mesma voz, sem parar no meio",
+            items: [
+                ChangelogItem(
+                    icon: "person.wave.2.fill",
+                    title: "Chega de voz de homem do nada",
+                    detail: "Quando a voz natural falhava, o app usava a voz padrão do iPhone — que podia ser masculina. Agora ele escolhe sempre a melhor voz feminina instalada, e a resposta inteira mantém o mesmo timbre."
+                ),
+                ChangelogItem(
+                    icon: "ear.badge.waveform",
+                    title: "Ele não se interrompe mais sozinho",
+                    detail: "O microfone ficava ouvindo o próprio alto-falante e às vezes entendia a própria fala como se fosse você, cortando a resposta. Agora só uma fala nova e bem diferente interrompe."
+                )
+            ]
+        ),
+        ChangelogRelease(
             version: "2.8",
             headline: "Uma voz só, do começo ao fim",
             items: [
