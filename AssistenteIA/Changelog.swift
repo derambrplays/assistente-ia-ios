@@ -54,6 +54,27 @@ struct ChangelogRelease: Identifiable {
 enum Changelog {
     static let releases: [ChangelogRelease] = [
         ChangelogRelease(
+            version: "2.13",
+            headline: "Voz do iPhone mais natural",
+            items: [
+                ChangelogItem(
+                    icon: "person.wave.2.fill",
+                    title: "Você vê qual voz está falando",
+                    detail: "Nos Ajustes aparece o nome e a qualidade da voz do iPhone em uso — é ela que fala quando a voz natural está sem cota ou falha."
+                ),
+                ChangelogItem(
+                    icon: "arrow.down.circle",
+                    title: "Atalho para uma voz melhor",
+                    detail: "Um botão abre os ajustes de voz do iPhone. Baixando uma voz Premium ou Melhorada em português, o app passa a usá-la sozinho e a fala fica bem menos robotizada."
+                ),
+                ChangelogItem(
+                    icon: "metronome",
+                    title: "Ritmo mais natural",
+                    detail: "A fala do iPhone ficou um pouco mais pausada, sem aquele ritmo apressado de leitura."
+                )
+            ]
+        ),
+        ChangelogRelease(
             version: "2.12",
             headline: "A voz voltou a falar sempre",
             items: [

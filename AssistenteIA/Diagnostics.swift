@@ -89,6 +89,8 @@ enum Diagnostics {
 
         // Uma palavra na voz natural: mostra na hora se o problema é cota.
         record("voz -> \(await GeminiClient.probeVoice())")
+        record("voz iphone: \(AudioPlayer.offlineVoiceName) [\(AudioPlayer.offlineVoiceQuality)]")
+        recordList("vozes pt:", AudioPlayer.portugueseVoiceNames)
 
         guard deep else {
             record("teste concluído")

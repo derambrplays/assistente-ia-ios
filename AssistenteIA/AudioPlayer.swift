@@ -57,6 +57,38 @@ final class AudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSp
         return best ?? AVSpeechSynthesisVoice(language: "pt-BR")
     }()
 
+    /// Nome e qualidade da voz do iPhone em uso (para mostrar nos Ajustes).
+    static var offlineVoiceName: String {
+        offlineVoice?.name ?? "voz padrão do iPhone"
+    }
+
+    static var offlineVoiceQuality: String {
+        guard let quality = offlineVoice?.quality else { return "Padrão" }
+        return qualityLabel(quality)
+    }
+
+    /// Vozes em português instaladas no iPhone (para o Diagnóstico).
+    static var portugueseVoiceNames: [String] {
+        AVSpeechSynthesisVoice.speechVoices()
+            .filter { $0.language.hasPrefix("pt") }
+            .map { "\($0.name) [\(qualityLabel($0.quality))]" }
+    }
+
+    private static func qualityLabel(_ quality: AVSpeechSynthesisVoice.Quality) -> String {
+        switch quality {
+        case .premium: return "Premium"
+        case .enhanced: return "Melhorada"
+        default: return "Padrão"
+        }
+    }
+
+    /// A voz compacta do iPhone é bem robotizada; Premium/Melhorada soa muito
+    /// mais natural. Só a pessoa pode baixar essas vozes nos Ajustes do iOS.
+    static var hasGoodOfflineVoice: Bool {
+        guard let quality = offlineVoice?.quality else { return false }
+        return quality == .premium || quality == .enhanced
+    }
+
     private enum Item {
         case audio(Data)
         case speech(String)
@@ -195,7 +227,7 @@ final class AudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSp
 
             let utterance = AVSpeechUtterance(string: text)
             utterance.voice = AudioPlayer.offlineVoice
-            utterance.rate = 0.5
+            utterance.rate = 0.48
             utterance.pitchMultiplier = 1.0
             synth.speak(utterance)
         }

@@ -433,6 +433,36 @@ struct SettingsView: View {
                 .tint(Theme.accent)
             }
 
+            // Voz de reserva: é a que fala quando a voz natural está sem cota
+            // ou falha. A qualidade depende da voz instalada no iPhone.
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Voz do iPhone: \(AudioPlayer.offlineVoiceName) (\(AudioPlayer.offlineVoiceQuality))")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(Theme.textDim)
+
+                if !AudioPlayer.hasGoodOfflineVoice {
+                    Text("Essa é a voz básica do sistema e soa robotizada. Baixe \"Luciana\" ou \"Fernanda\" na versão Premium em Ajustes → Acessibilidade → Conteúdo Falado → Vozes → Português (Brasil). O app passa a usar a melhor voz instalada sozinho.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textFaint)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Button {
+                    openVoiceSettings()
+                } label: {
+                    Label("Abrir ajustes de voz do iPhone", systemImage: "arrow.up.forward.app")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.accent2)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.white.opacity(0.04))
+            )
+
             Button {
                 store.speak("Oi! Eu sou seu assistente. Como posso ajudar?")
             } label: {
@@ -451,6 +481,17 @@ struct SettingsView: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard()
+    }
+
+    /// Abre os Ajustes do iOS na tela de vozes. Se o link direto não for aceito,
+    /// cai nos ajustes do próprio app.
+    private func openVoiceSettings() {
+        if let url = URL(string: "App-prefs:root=ACCESSIBILITY&path=Spoken%20Content") {
+            UIApplication.shared.open(url, options: [:]) { opened in
+                guard !opened, let fallback = URL(string: UIApplication.openSettingsURLString) else { return }
+                UIApplication.shared.open(fallback)
+            }
+        }
     }
 
     // MARK: - Diagnóstico
