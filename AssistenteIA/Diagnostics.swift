@@ -33,16 +33,32 @@ enum Diagnostics {
         lock.unlock()
     }
 
+    /// Quebra listas longas em várias linhas: o log pelo cabo corta linhas grandes.
+    private static func recordList(_ prefix: String, _ items: [String]) {
+        guard !items.isEmpty else {
+            record("\(prefix) (vazio)")
+            return
+        }
+        var index = 0
+        while index < items.count {
+            let end = min(index + 3, items.count)
+            record("\(prefix) \(items[index..<end].joined(separator: ", "))")
+            index = end
+        }
+    }
+
     private static func clock() -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
         return formatter.string(from: Date())
     }
 
-    /// Roda o teste completo. É chamado ao abrir o app e pelo botão dos Ajustes.
-    static func run(primary: String) async {
+    /// Roda o teste completo. Chamado pelo botão "Diagnóstico" nos Ajustes.
+    /// - Parameter deep: `false` faz só o teste de imagem (usado uma vez por
+    ///   atualização, sem gastar a cota de voz e de conversa).
+    static func run(primary: String, deep: Bool = true) async {
         clear()
-        record("teste iniciado")
+        record(deep ? "teste iniciado" : "teste de imagem iniciado")
 
         guard GeminiClient.hasKey else {
             record("sem chave configurada")
@@ -53,14 +69,26 @@ enum Diagnostics {
         record("lista de modelos: \(count)")
 
         let all = await GeminiClient.modelIDs()
-        record("ids: \(all.joined(separator: ", "))")
+        recordList("ids:", all)
 
         let image = await GeminiClient.imageModels()
-        record("imagem: \(image.joined(separator: ", "))")
+        recordList("imagem:", image)
 
         for model in image.prefix(3) {
             let status = await GeminiClient.probeImageModel(model)
             record("imagem teste \(model) -> \(status)")
+        }
+
+        // Teste de verdade, com um pedido mínimo: é o único jeito de saber se
+        // a chave pode mesmo gerar imagem.
+        for model in image.prefix(2) {
+            let status = await GeminiClient.probeImageGenerate(model)
+            record("imagem gerar \(model) -> \(status)")
+        }
+
+        guard deep else {
+            record("teste concluído")
+            return
         }
 
         var candidates: [String] = [primary]

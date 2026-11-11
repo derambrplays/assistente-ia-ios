@@ -54,6 +54,27 @@ struct ChangelogRelease: Identifiable {
 enum Changelog {
     static let releases: [ChangelogRelease] = [
         ChangelogRelease(
+            version: "2.10",
+            headline: "Sem voz de robô e entendendo áudio",
+            items: [
+                ChangelogItem(
+                    icon: "speaker.slash.fill",
+                    title: "A voz de robô saiu",
+                    detail: "Com a voz natural ligada, o app nunca mais troca sozinho para a voz robótica do iPhone. Se a voz natural falhar, ele tenta de novo algumas vezes em vez de mudar o timbre."
+                ),
+                ChangelogItem(
+                    icon: "waveform",
+                    title: "Agora ele entende áudio",
+                    detail: "Todo áudio enviado é transcrito antes da resposta, então qualquer modelo entende o que foi falado — e ele não diz mais que é um assistente só de texto."
+                ),
+                ChangelogItem(
+                    icon: "photo",
+                    title: "Imagens com o motivo certo",
+                    detail: "Quando a imagem não sai, a mensagem agora diz o motivo real (cota do plano, permissão ou modelo indisponível), e o Diagnóstico testa a geração de verdade."
+                )
+            ]
+        ),
+        ChangelogRelease(
             version: "2.9",
             headline: "A mesma voz, sem parar no meio",
             items: [

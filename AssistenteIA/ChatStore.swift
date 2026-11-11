@@ -47,7 +47,7 @@ final class ChatStore: ObservableObject {
     private var speechScheduled = 0
     private var speechStarted = false
     private var speechChunkCount = 0
-    private var speechOfflineFallback = false
+    private var speechVoiceGap = false
     private var bargeInHandled = false
     private var lastSpeechFetch: Task<Void, Never>?
 
@@ -78,11 +78,17 @@ final class ChatStore: ObservableObject {
             location.request()
         }
 
-        // Autoteste silencioso: mostra no log o que o servidor está respondendo.
+        // Uma vez por atualização, testa a geração de imagem de verdade para
+        // saber se a chave pode gerar imagens. Não roda a cada abertura e não
+        // gasta a cota de voz/conversa.
         if hasKey {
-            let primary = settings.model
-            Task.detached(priority: .utility) {
-                await Diagnostics.run(primary: primary)
+            let marker = "diag.lastBuild"
+            if UserDefaults.standard.string(forKey: marker) != AppInfo.buildKey {
+                UserDefaults.standard.set(AppInfo.buildKey, forKey: marker)
+                let primary = settings.model
+                Task.detached(priority: .utility) {
+                    await Diagnostics.run(primary: primary, deep: false)
+                }
             }
         }
     }
@@ -230,8 +236,31 @@ final class ChatStore: ObservableObject {
         sendTask = Task { [weak self] in
             guard let self = self else { return }
             do {
+                // Áudio enviado é transcrito antes: assim qualquer modelo
+                // entende o que foi falado, mesmo os mais leves.
+                var prepared = history
+                let audioAttachments = finalAttachments.filter { $0.mimeType.hasPrefix("audio/") }
+                if !audioAttachments.isEmpty {
+                    var notes: [String] = []
+                    for attachment in audioAttachments {
+                        guard let data = AttachmentStore.data(for: attachment) else { continue }
+                        let transcript = (try? await GeminiClient.transcribe(
+                            audio: data,
+                            mimeType: attachment.mimeType
+                        )) ?? ""
+                        let clean = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !clean.isEmpty {
+                            notes.append("Transcrição do áudio \"\(attachment.name)\": \(clean)")
+                        }
+                    }
+                    if !notes.isEmpty,
+                       let index = prepared.lastIndex(where: { $0.role == .user }) {
+                        prepared[index].text += "\n\n" + notes.joined(separator: "\n\n")
+                    }
+                }
+
                 try await GeminiClient.streamChat(
-                    messages: history,
+                    messages: prepared,
                     system: system,
                     model: model,
                     temperature: temperature,
@@ -503,7 +532,7 @@ final class ChatStore: ObservableObject {
         speechScheduled = 0
         speechStarted = false
         speechChunkCount = 0
-        speechOfflineFallback = false
+        speechVoiceGap = false
         bargeInHandled = false
         lastSpeechFetch = nil
 
@@ -548,9 +577,13 @@ final class ChatStore: ObservableObject {
         if speechScheduled == 0 {
             let clean = stripMarkdown(fallback)
             if !clean.isEmpty {
-                speechScheduled += 1
-                player.enqueueSpeech(clean)
-                markSpeechStarted()
+                if settings.naturalVoice {
+                    enqueueSpeechChunk(clean)
+                } else {
+                    speechScheduled += 1
+                    player.enqueueSpeech(clean)
+                    markSpeechStarted()
+                }
             }
         }
 
@@ -570,7 +603,9 @@ final class ChatStore: ObservableObject {
         speechScheduled += 1
         let generation = speechGeneration
 
-        if !settings.naturalVoice || speechOfflineFallback {
+        // A voz robótica do iPhone só existe se a pessoa escolher "voz natural
+        // desligada". Com a voz natural ligada, nunca caímos nela sozinhos.
+        if !settings.naturalVoice {
             player.enqueueSpeech(text)
             markSpeechStarted()
             return
@@ -584,16 +619,18 @@ final class ChatStore: ObservableObject {
             await previous?.value
             guard let self = self else { return }
 
-            // Três tentativas: um tropeço de rede não muda a voz no meio da frase.
+            // Várias tentativas: o limite da voz costuma ser passageiro e é
+            // melhor esperar do que trocar para uma voz robótica.
             var audio: Data?
-            for attempt in 0..<3 {
+            let waits: [UInt64] = [500_000_000, 1_200_000_000, 2_500_000_000]
+            for attempt in 0...waits.count {
+                if Task.isCancelled { return }
                 do {
                     audio = try await GeminiClient.speak(text: text, voice: voice)
                     break
                 } catch {
-                    if attempt < 2 {
-                        let wait: UInt64 = attempt == 0 ? 300_000_000 : 800_000_000
-                        try? await Task.sleep(nanoseconds: wait)
+                    if attempt < waits.count {
+                        try? await Task.sleep(nanoseconds: waits[attempt])
                     }
                 }
             }
@@ -602,13 +639,13 @@ final class ChatStore: ObservableObject {
                 guard generation == self.speechGeneration else { return }
                 self.speechPending -= 1
 
-                if let audio = audio, !self.speechOfflineFallback {
+                if let audio = audio {
                     self.player.enqueue(data: audio)
                 } else {
-                    // Se a voz natural falhar de vez, o resto desta resposta
-                    // continua na voz do iPhone — sem alternar no meio.
-                    self.speechOfflineFallback = true
-                    self.player.enqueueSpeech(text)
+                    // Sem voz natural: fica em silêncio neste trecho (o texto
+                    // está na tela) em vez de usar a voz de robô.
+                    Diagnostics.record("voz falhou em um trecho da resposta")
+                    self.speechVoiceGap = true
                 }
 
                 self.markSpeechStarted()
@@ -636,6 +673,14 @@ final class ChatStore: ObservableObject {
             self.speechScheduled = 0
             self.speechStarted = false
             self.lastSpeechFetch = nil
+
+            if self.speechVoiceGap {
+                self.speechVoiceGap = false
+                if self.voiceMode {
+                    self.banner = "A voz natural falhou em um trecho. A resposta completa está na tela."
+                }
+            }
+
             self.afterSpeech()
         }
     }
@@ -646,14 +691,16 @@ final class ChatStore: ObservableObject {
         // O primeiro pedaço é bem curto (aceita até vírgula) para a voz começar
         // quase junto com a resposta; depois agrupamos mais texto por pedido.
         let firstOfTurn = speechChunkCount == 0
-        let minLength = firstOfTurn ? 14 : 150
+        // Pedaços maiores depois do primeiro: menos pedidos de voz (a cota é
+        // apertada) sem atrasar o começo da fala.
+        let minLength = firstOfTurn ? 14 : 220
 
         while true {
             let text = speechBuffer
             guard !text.isEmpty else { break }
 
             let isFirst = firstOfTurn && chunks.isEmpty
-            let maxLength = isFirst ? 70 : 320
+            let maxLength = isFirst ? 70 : 800
             var cut: String.Index?
 
             var index = text.startIndex

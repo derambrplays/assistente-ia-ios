@@ -26,9 +26,10 @@ enum GeminiClient {
     ]
 
     static let ttsModels = [
+        "gemini-2.5-flash-preview-tts",
+        "gemini-2.5-pro-preview-tts",
         "gemini-3.8-flash-lite-tts",
-        "gemini-3.8-flash-tts",
-        "gemini-2.5-flash-preview-tts"
+        "gemini-3.8-flash-tts"
     ]
 
     static let voices = [
@@ -209,9 +210,52 @@ enum GeminiClient {
         }
     }
 
-    /// Testa a voz com uma palavra.
-    static func probeVoice() async -> String {
+    /// Gera uma imagem de verdade (pedido mínimo) para saber se a chave pode
+    /// mesmo produzir imagens — não só se o modelo existe.
+    static func probeImageGenerate(_ model: String) async -> String {
+        guard let url = URL(string: "\(apiBase)/models/\(model):generateContent") else {
+            return "endereço inválido"
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 60
+        applyHeaders(&request, key: apiKey)
+
+        let body: [String: Any] = [
+            "contents": [[
+                "role": "user",
+                "parts": [["text": "Gere uma imagem de um quadrado azul simples."]]
+            ]],
+            "generationConfig": ["responseModalities": ["TEXT", "IMAGE"]]
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
         do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { return "resposta inválida" }
+
+            if http.statusCode != 200 {
+                let raw = String(data: data, encoding: .utf8) ?? ""
+                return "\(http.statusCode) \(shortReason(raw))"
+            }
+
+            guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let candidates = object["candidates"] as? [[String: Any]],
+                  let content = candidates.first?["content"] as? [String: Any],
+                  let parts = content["parts"] as? [[String: Any]] else {
+                return "200 sem imagem"
+            }
+
+            let hasImage = parts.contains { $0["inlineData"] != nil }
+            return hasImage ? "200 imagem ok" : "200 sem imagem"
+        } catch {
+            return "rede: \(error.localizedDescription)"
+        }
+    }
+
+    /// Testa a voz com uma palavra.
+    static func probeVoice() async -> String {        do {
             _ = try await speak(text: "oi", voice: "Kore")
             return "200 ok"
         } catch let error as GeminiError {
@@ -731,10 +775,31 @@ enum GeminiClient {
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse else { continue }
                 guard http.statusCode == 200 else {
+                    let raw = String(data: data, encoding: .utf8) ?? ""
                     if http.statusCode == 404 || http.statusCode == 400 {
                         markTTSBroken(model)
+                        lastError = GeminiError(
+                            message: friendly(http.statusCode),
+                            retryable: true,
+                            status: http.statusCode
+                        )
+                        continue
                     }
-                    lastError = GeminiError(message: friendly(http.statusCode), retryable: true)
+                    if http.statusCode == 429 {
+                        // Limite de uso da chave: trocar de modelo não resolve,
+                        // só gasta mais pedidos. Devolve na hora.
+                        throw GeminiError(
+                            message: friendly(429),
+                            retryable: true,
+                            status: 429,
+                            dailyQuota: isDailyQuota(raw)
+                        )
+                    }
+                    lastError = GeminiError(
+                        message: friendly(http.statusCode),
+                        retryable: true,
+                        status: http.statusCode
+                    )
                     continue
                 }
                 guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -822,7 +887,7 @@ enum GeminiClient {
         ]
         let bodyData = try JSONSerialization.data(withJSONObject: body)
 
-        for model in ["gemini-3.5-flash-lite", "gemini-2.5-flash"] {
+        for model in ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-flash-lite-latest"] {
             guard let url = URL(string: "\(apiBase)/models/\(model):generateContent") else { continue }
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
@@ -1094,6 +1159,9 @@ enum GeminiClient {
         }
 
         var lastError = GeminiError(message: "Não consegui gerar a imagem. Tente de novo.", retryable: true)
+        // Guarda o erro mais informativo: um 404 do último modelo da lista não
+        // pode esconder um 429 de cota que veio antes.
+        var bestError: GeminiError?
 
         for candidate in candidates where !isExhausted(candidate) {
             guard let url = URL(string: "\(apiBase)/models/\(candidate):generateContent") else { continue }
@@ -1113,18 +1181,21 @@ enum GeminiClient {
                     Diagnostics.record("imagem \(candidate) -> \(http.statusCode) \(shortReason(raw))")
                     if http.statusCode == 429 && isDailyQuota(raw) { markExhausted(candidate) }
 
-                    let base = friendly(http.statusCode)
-                    lastError = GeminiError(
-                        message: base,
+                    let error = GeminiError(
+                        message: imageErrorMessage(status: http.statusCode, raw: raw),
                         retryable: [429, 500, 502, 503].contains(http.statusCode),
                         status: http.statusCode,
                         dailyQuota: http.statusCode == 429 && isDailyQuota(raw)
                     )
+                    lastError = error
+                    if bestError == nil || (bestError?.status == 404 && error.status != 404) {
+                        bestError = error
+                    }
 
-                    if lastError.retryable || http.statusCode == 404 || http.statusCode == 400 {
+                    if error.retryable || http.statusCode == 404 || http.statusCode == 400 {
                         continue
                     }
-                    throw lastError
+                    throw error
                 }
 
                 guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -1179,6 +1250,10 @@ enum GeminiClient {
             }
         }
 
+        if let bestError {
+            throw bestError
+        }
+
         if lastError.status == 404 {
             throw GeminiError(
                 message: "A geração de imagens não está liberada na sua chave de acesso. O resto do app continua funcionando normalmente.",
@@ -1187,6 +1262,36 @@ enum GeminiClient {
         }
 
         throw lastError
+    }
+
+    /// Mensagem clara para o que realmente aconteceu ao gerar imagem.
+    private static func imageErrorMessage(status: Int, raw: String) -> String {
+        let lower = raw.lowercased()
+
+        if status == 429 || lower.contains("resource_exhausted") {
+            if lower.contains("limit: 0")
+                || lower.contains("free_tier")
+                || lower.contains("free tier")
+                || lower.contains("per_day")
+                || lower.contains("perday") {
+                return "A sua chave não tem cota para gerar imagens neste plano. A geração de imagens precisa estar liberada na conta."
+            }
+            return "O limite de geração de imagens foi atingido agora. Tente de novo em alguns minutos."
+        }
+
+        if status == 403 || lower.contains("permission_denied") {
+            return "A sua chave não tem permissão para gerar imagens."
+        }
+
+        if status == 404 {
+            return "Este modelo de imagem não está disponível para a sua chave."
+        }
+
+        if status == 400 {
+            return "O modelo recusou o pedido de imagem. Tente descrever de outro jeito."
+        }
+
+        return friendly(status)
     }
 
     // MARK: - Modelos disponíveis
