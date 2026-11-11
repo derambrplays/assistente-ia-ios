@@ -48,9 +48,11 @@ struct VoiceView: View {
                 header
 
                 if let until = store.serverBusyUntil {
-                    ServerBusyBanner(until: until) {
-                        store.serverBusyUntil = nil
-                    }
+                    ServerBusyBanner(
+                        until: until,
+                        onRetry: { store.retryServer() },
+                        onDismiss: { store.serverBusyUntil = nil }
+                    )
                     .padding(.top, 10)
                 }
 

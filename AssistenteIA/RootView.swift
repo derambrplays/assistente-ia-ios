@@ -69,9 +69,11 @@ struct RootView: View {
         .overlay(alignment: .top) {
             VStack(spacing: 8) {
                 if let until = store.serverBusyUntil {
-                    ServerBusyBanner(until: until) {
-                        store.serverBusyUntil = nil
-                    }
+                    ServerBusyBanner(
+                        until: until,
+                        onRetry: { store.retryServer() },
+                        onDismiss: { store.serverBusyUntil = nil }
+                    )
                 }
 
                 if let banner = store.banner {

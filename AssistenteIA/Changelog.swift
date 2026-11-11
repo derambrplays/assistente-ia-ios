@@ -54,6 +54,27 @@ struct ChangelogRelease: Identifiable {
 enum Changelog {
     static let releases: [ChangelogRelease] = [
         ChangelogRelease(
+            version: "2.6",
+            headline: "Texto voltou a funcionar",
+            items: [
+                ChangelogItem(
+                    icon: "text.bubble.fill",
+                    title: "Conversa por texto corrigida",
+                    detail: "Quando a busca do Google estourava a cota, o app achava que tudo estava esgotado. Agora ele responde mesmo sem a busca."
+                ),
+                ChangelogItem(
+                    icon: "arrow.clockwise",
+                    title: "Tentar agora",
+                    detail: "O aviso de servidor ocupado ganhou um botão que limpa o bloqueio e repete a última pergunta na hora."
+                ),
+                ChangelogItem(
+                    icon: "stethoscope",
+                    title: "Diagnóstico completo",
+                    detail: "O teste agora também verifica a busca, que é o que mais travava o modo texto."
+                )
+            ]
+        ),
+        ChangelogRelease(
             version: "2.5",
             headline: "Diagnóstico na mão",
             items: [

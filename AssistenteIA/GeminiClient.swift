@@ -142,6 +142,35 @@ enum GeminiClient {
         }
     }
 
+    /// Testa o mesmo pedido, mas com a busca do Google ligada.
+    /// É o que o modo texto usa — e o que mais costuma estourar cota.
+    static func probeSearch(model: String) async -> String {
+        guard let url = URL(string: "\(apiBase)/models/\(model):generateContent") else {
+            return "endereço inválido"
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 25
+        applyHeaders(&request, key: apiKey)
+
+        let body: [String: Any] = [
+            "contents": [["role": "user", "parts": [["text": "oi"]]]],
+            "generationConfig": ["maxOutputTokens": 1, "temperature": 0],
+            "tools": [["google_search": [String: Any]()]]
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { return "resposta inválida" }
+            let raw = String(data: data, encoding: .utf8) ?? ""
+            return "\(http.statusCode) \(shortReason(raw))"
+        } catch {
+            return "rede: \(error.localizedDescription)"
+        }
+    }
+
     /// Testa a voz com uma palavra.
     static func probeVoice() async -> String {
         do {
@@ -201,6 +230,23 @@ enum GeminiClient {
         searchLock.lock()
         searchUnsupported.insert(model)
         searchLock.unlock()
+    }
+
+    /// Esquece as marcas de "sem cota" e "sem busca". Usado pelo botão
+    /// "Tentar agora" e quando todos os modelos parecem esgotados.
+    static func resetLimits() {
+        quotaLock.lock()
+        exhaustedModels.removeAll()
+        quotaDay = dayKey()
+        quotaLock.unlock()
+
+        searchLock.lock()
+        searchUnsupported.removeAll()
+        searchLock.unlock()
+
+        thinkingLock.lock()
+        thinkingUnsupported.removeAll()
+        thinkingLock.unlock()
     }
 
     private static let thinkingLock = NSLock()
@@ -370,13 +416,12 @@ enum GeminiClient {
             candidates.append(candidate)
         }
 
-        let withQuota = candidates.filter { !isExhausted($0) }
+        var withQuota = candidates.filter { !isExhausted($0) }
         if withQuota.isEmpty {
-            throw GeminiError(
-                message: ServerStatus.busyMessage(until: ServerStatus.nextReset),
-                status: 429,
-                dailyQuota: true
-            )
+            // Nada de travar o dia inteiro: se todas as marcas de cota vieram de
+            // um 429 passageiro, limpa tudo e tenta de novo.
+            resetLimits()
+            withQuota = candidates
         }
         candidates = Array(withQuota.prefix(6))
 
@@ -420,10 +465,14 @@ enum GeminiClient {
                         tryingThinking = false
                         continue
                     }
-                    // Alguns modelos não aceitam a ferramenta de busca.
-                    // Tenta o mesmo modelo sem ela antes de trocar de modelo.
-                    if tryingSearch && error.status == 400 {
-                        markSearchUnsupported(candidate)
+                    // Alguns modelos não aceitam a ferramenta de busca, ou a busca
+                    // estourou a cota. Tenta o mesmo modelo sem ela antes de
+                    // trocar de modelo — assim o texto continua funcionando.
+                    if tryingSearch && (error.status == 400 || error.status == 429 || error.status >= 500) {
+                        if error.status == 400 {
+                            // O modelo realmente não aceita a busca.
+                            markSearchUnsupported(candidate)
+                        }
                         tryingSearch = false
                         continue
                     }
@@ -1023,7 +1072,7 @@ enum GeminiClient {
 
                 if http.statusCode != 200 {
                     let raw = String(data: data, encoding: .utf8) ?? ""
-                    if http.statusCode == 429 { markExhausted(candidate) }
+                    if http.statusCode == 429 && isDailyQuota(raw) { markExhausted(candidate) }
 
                     let base = friendly(http.statusCode)
                     lastError = GeminiError(

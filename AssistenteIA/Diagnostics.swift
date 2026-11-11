@@ -61,6 +61,11 @@ enum Diagnostics {
             record("chat \(model) -> \(result)")
         }
 
+        if let first = candidates.first {
+            let search = await GeminiClient.probeSearch(model: first)
+            record("busca \(first) -> \(search)")
+        }
+
         let tts = await GeminiClient.probeVoice()
         record("voz -> \(tts)")
 

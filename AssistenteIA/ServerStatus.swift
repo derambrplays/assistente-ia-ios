@@ -45,6 +45,7 @@ enum ServerStatus {
 /// Aviso fixo no topo com a contagem regressiva até o servidor voltar.
 struct ServerBusyBanner: View {
     let until: Date
+    var onRetry: () -> Void = {}
     var onDismiss: () -> Void
 
     var body: some View {
@@ -75,6 +76,21 @@ struct ServerBusyBanner: View {
                             .font(.system(size: 11.5))
                             .foregroundStyle(Theme.textDim)
                     }
+
+                    Button(action: onRetry) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 9.5, weight: .bold))
+                            Text("Tentar agora")
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(Theme.accent.opacity(0.55)))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 4)
                 }
 
                 Spacer(minLength: 4)

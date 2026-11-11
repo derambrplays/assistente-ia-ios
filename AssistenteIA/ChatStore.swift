@@ -32,6 +32,8 @@ final class ChatStore: ObservableObject {
 
     private var sendTask: Task<Void, Never>?
     private var lastSpoken = ""
+    private var lastRequestText: String?
+    private var lastRequestSpeak = false
     private var speechGeneration = 0
     private var turnsSinceMemory = 0
     private var cancellables = Set<AnyCancellable>()
@@ -175,6 +177,11 @@ final class ChatStore: ObservableObject {
             return
         }
 
+        if !text.isEmpty {
+            lastRequestText = text
+            lastRequestSpeak = speakReply
+        }
+
         // Pedidos de gerar/editar imagem vão para o modelo de imagem.
         if Self.wantsImageEdit(text, attachments: attachments) {
             generateImage(prompt: text, attachments: attachments)
@@ -257,10 +264,36 @@ final class ChatStore: ObservableObject {
     func stop() {
         sendTask?.cancel()
         sendTask = nil
-
         if speechStreaming || speechStreamDone || speechStarted {
             cancelSpeechPipeline()
         }
+    }
+
+    // MARK: - Tentar de novo
+
+    /// Botão "Tentar agora": esquece as marcas de cota, limpa o aviso de
+    /// servidor ocupado e repete a última pergunta.
+    func retryServer() {
+        serverBusyUntil = nil
+        GeminiClient.resetLimits()
+
+        guard !isSending else { return }
+        guard let text = lastRequestText, let activeID = activeID else {
+            banner = "Pode falar ou escrever de novo."
+            return
+        }
+
+        // Tira a pergunta e a resposta que falhou para não duplicar nada.
+        if let index = conversations.firstIndex(where: { $0.id == activeID }) {
+            var messages = conversations[index].messages
+            if let lastUser = messages.lastIndex(where: { $0.role == .user }) {
+                messages.removeSubrange(lastUser..<messages.count)
+            }
+            conversations[index].messages = messages
+        }
+
+        banner = "Tentando de novo…"
+        send(text, speakReply: lastRequestSpeak)
     }
 
     private func appendDelta(_ id: UUID, _ delta: String) {
