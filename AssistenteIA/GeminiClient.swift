@@ -110,6 +110,18 @@ enum GeminiClient {
 
     // MARK: - Diagnóstico
 
+    /// Todos os modelos que a chave enxerga, sem filtro (para o diagnóstico).
+    static func modelIDs() async -> [String] {
+        let models = await allModels()
+        var ids: [String] = []
+        for model in models {
+            guard let name = model["name"] as? String else { continue }
+            let id = name.split(separator: "/").last.map(String.init) ?? name
+            if !ids.contains(id) { ids.append(id) }
+        }
+        return ids
+    }
+
     /// Quantidade de modelos que a chave consegue listar.
     static func modelCount() async -> Int {
         (try? await listModels())?.count ?? -1
@@ -1138,6 +1150,13 @@ enum GeminiClient {
                 if Task.isCancelled { throw CancellationError() }
                 lastError = GeminiError(message: error.localizedDescription, retryable: true)
             }
+        }
+
+        if lastError.status == 404 {
+            throw GeminiError(
+                message: "A geração de imagens não está liberada na sua chave de acesso. O resto do app continua funcionando normalmente.",
+                status: 404
+            )
         }
 
         throw lastError

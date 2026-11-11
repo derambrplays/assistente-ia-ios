@@ -13,10 +13,13 @@ final class SpeechController {
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var silenceWork: DispatchWorkItem?
+    private var watchdogWork: DispatchWorkItem?
     private var tapInstalled = false
     private var running = false
     private var lastText = ""
     private var onDeviceBroken = false
+    private var heardSomething = false
+    private var lastSilence: TimeInterval = 0.9
 
     var onPartial: ((String) -> Void)?
     var onFinal: ((String) -> Void)?
@@ -51,6 +54,8 @@ final class SpeechController {
 
     func start(silence: TimeInterval = 0.9, onDevice: Bool = true) {
         guard !running else { return }
+        lastSilence = silence
+
         guard let recognizer = recognizer, recognizer.isAvailable else {
             onError?("O ditado do iPhone não está disponível agora. Verifique em Ajustes → Geral → Teclado → Ditado.")
             return
@@ -76,32 +81,51 @@ final class SpeechController {
         }
         request = recognitionRequest
         lastText = ""
+        heardSomething = false
         running = true
 
         task = recognizer.recognitionTask(with: recognitionRequest) { [weak self] result, error in
-            guard let self = self else { return }
+            guard let self = self, self.running else { return }
 
             if let result = result {
                 let text = result.bestTranscription.formattedString
+                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    self.heardSomething = true
+                }
                 if text != self.lastText {
                     self.lastText = text
                     DispatchQueue.main.async { self.onPartial?(text) }
-                    self.scheduleSilence(silence)
+                    // O silêncio só conta depois que ele começou a ouvir algo.
+                    if self.heardSomething {
+                        self.scheduleSilence(self.lastSilence)
+                    }
                 }
                 if result.isFinal {
                     self.finish(deliver: true)
+                    return
                 }
             }
+
             if error != nil {
-                // Se o modo no aparelho falhar de cara, volta para o servidor.
-                if useOnDevice && self.lastText.isEmpty {
+                // Se o modo no aparelho falhou antes de ouvir qualquer coisa,
+                // troca para o reconhecimento do servidor e recomeça na hora,
+                // sem perder este turno.
+                if useOnDevice && !self.heardSomething {
                     self.onDeviceBroken = true
+                    self.finish(deliver: false)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                        self?.start(silence: self?.lastSilence ?? 0.9, onDevice: false)
+                    }
+                    return
                 }
                 self.finish(deliver: true)
             }
         }
 
-        scheduleSilence(silence)
+        // Nada de encerrar o turno antes de ouvir: o cronômetro de silêncio
+        // começa no primeiro trecho reconhecido (acima). Aqui só fica um
+        // vigia para o caso de o reconhecedor morrer calado.
+        startWatchdog()
     }
 
     func stop() {
@@ -125,20 +149,24 @@ final class SpeechController {
     // MARK: - Interno
 
     private func activateSession() -> Bool {
-        do {
-            let session = AVAudioSession.sharedInstance()
-            if session.category != .playAndRecord {
-                try session.setCategory(
-                    .playAndRecord,
-                    mode: .voiceChat,
-                    options: [.defaultToSpeaker, .allowBluetooth]
-                )
+        let session = AVAudioSession.sharedInstance()
+        for _ in 0..<2 {
+            do {
+                if session.category != .playAndRecord {
+                    try session.setCategory(
+                        .playAndRecord,
+                        mode: .voiceChat,
+                        options: [.defaultToSpeaker, .allowBluetooth]
+                    )
+                }
+                try session.setActive(true, options: [])
+                return true
+            } catch {
+                // O alto-falante pode estar ocupado terminando a fala anterior.
+                Thread.sleep(forTimeInterval: 0.12)
             }
-            try session.setActive(true, options: [])
-            return true
-        } catch {
-            return false
         }
+        return false
     }
 
     private func ensureTap() {
@@ -178,6 +206,24 @@ final class SpeechController {
         }
     }
 
+    /// Se o reconhecedor ficar 12 s sem devolver nada, recomeça sozinho.
+    private func startWatchdog() {
+        DispatchQueue.main.async {
+            self.watchdogWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self = self, self.running, !self.heardSomething else { return }
+                let silence = self.lastSilence
+                let useOnDevice = !self.onDeviceBroken
+                self.finish(deliver: false)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                    self?.start(silence: silence, onDevice: useOnDevice)
+                }
+            }
+            self.watchdogWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 12, execute: work)
+        }
+    }
+
     private func publishLevel(_ buffer: AVAudioPCMBuffer) {
         guard let channel = buffer.floatChannelData?[0] else { return }
         let frames = Int(buffer.frameLength)
@@ -200,6 +246,8 @@ final class SpeechController {
         DispatchQueue.main.async {
             self.silenceWork?.cancel()
             self.silenceWork = nil
+            self.watchdogWork?.cancel()
+            self.watchdogWork = nil
         }
 
         request?.endAudio()
@@ -209,6 +257,7 @@ final class SpeechController {
 
         let text = lastText.trimmingCharacters(in: .whitespacesAndNewlines)
         lastText = ""
+        heardSomething = false
 
         DispatchQueue.main.async {
             self.onLevel?(0)

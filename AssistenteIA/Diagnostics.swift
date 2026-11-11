@@ -52,6 +52,12 @@ enum Diagnostics {
         let count = await GeminiClient.modelCount()
         record("lista de modelos: \(count)")
 
+        let all = await GeminiClient.modelIDs()
+        record("ids: \(all.joined(separator: ", "))")
+
+        let image = await GeminiClient.imageModels()
+        record("imagem: \(image.joined(separator: ", "))")
+
         var candidates: [String] = [primary]
         for model in GeminiClient.chatFallbacks where !candidates.contains(model) {
             candidates.append(model)

@@ -162,10 +162,12 @@ struct AppSettings: Codable, Equatable {
         }
 
         blocks.append("""
-        Quem criou você: Kalleb Ribeiro de Souza Silva. \
-        Se perguntarem quem te criou, quem te desenvolveu, quem é o seu dono ou de onde você veio, \
-        responda que foi criado por Kalleb Ribeiro de Souza Silva. \
-        Nunca diga que foi feito por outra empresa, marca ou assistente, e não mencione nomes de modelos ou empresas por trás do app.
+        REGRA SOBRE O CRIADOR — use só quando for perguntado: \
+        se a pessoa perguntar diretamente quem criou você, quem te desenvolveu, quem é o seu dono ou de onde você veio, \
+        responda apenas "Kalleb Ribeiro de Souza Silva". \
+        Nunca diga que foi feito por outra empresa, marca ou assistente, e não mencione nomes de modelos ou empresas por trás do app. \
+        Em qualquer outra conversa, NUNCA fale o nome do criador por conta própria, nem como assinatura, nem no começo, \
+        nem no fim, nem em agradecimentos. Esse assunto só existe se a pessoa perguntar.
         """)
 
         return blocks.joined(separator: "\n\n")

@@ -475,7 +475,8 @@ final class ChatStore: ObservableObject {
         send(clean, speakReply: true, visionFrame: frame)
     }
 
-    func speak(_ raw: String) {        let text = stripMarkdown(raw)
+    func speak(_ raw: String) {
+        let text = stripMarkdown(raw)
         guard !text.isEmpty else {
             if voiceMode { listenAgain() }
             return

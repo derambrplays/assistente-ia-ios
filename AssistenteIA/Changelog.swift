@@ -54,6 +54,27 @@ struct ChangelogRelease: Identifiable {
 enum Changelog {
     static let releases: [ChangelogRelease] = [
         ChangelogRelease(
+            version: "2.7",
+            headline: "Escuta e fala do jeito certo",
+            items: [
+                ChangelogItem(
+                    icon: "mic.fill",
+                    title: "Ele não desiste mais de ouvir",
+                    detail: "Antes o app encerrava a escuta 0,8 s depois de começar, antes mesmo de você falar. Agora o silêncio só conta depois que ele te ouve."
+                ),
+                ChangelogItem(
+                    icon: "waveform.badge.exclamationmark",
+                    title: "Escuta que se recupera",
+                    detail: "Se o ditado falhar, ele troca sozinho para o modo do servidor e recomeça na mesma hora, sem perder a sua fala."
+                ),
+                ChangelogItem(
+                    icon: "person.crop.circle.badge.xmark",
+                    title: "Chega de falar seu nome",
+                    detail: "O nome do criador só aparece se você perguntar quem criou o app. Nas conversas normais ele não fala mais isso."
+                )
+            ]
+        ),
+        ChangelogRelease(
             version: "2.6",
             headline: "Texto voltou a funcionar",
             items: [
