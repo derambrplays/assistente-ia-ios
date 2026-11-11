@@ -54,6 +54,22 @@ struct ChangelogRelease: Identifiable {
 enum Changelog {
     static let releases: [ChangelogRelease] = [
         ChangelogRelease(
+            version: "2.14",
+            headline: "Aviso certo quando a voz fica sem cota",
+            items: [
+                ChangelogItem(
+                    icon: "clock.badge.exclamationmark",
+                    title: "Contagem regressiva da voz",
+                    detail: "Se a cota diária de voz acabar, aparece o aviso de servidor sobrecarregado com a contagem até a renovação, em horário de Brasília."
+                ),
+                ChangelogItem(
+                    icon: "stethoscope",
+                    title: "Diagnóstico da voz detalhado",
+                    detail: "O log agora mostra a resposta exata do servidor quando a voz falha, para separar cota de problema de modelo."
+                )
+            ]
+        ),
+        ChangelogRelease(
             version: "2.13",
             headline: "Voz do iPhone mais natural",
             items: [

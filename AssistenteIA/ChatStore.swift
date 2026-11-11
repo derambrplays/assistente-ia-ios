@@ -645,6 +645,7 @@ final class ChatStore: ObservableObject {
             // melhor esperar do que trocar de voz. Mas cota esgotada não
             // melhora esperando — nesse caso vai direto para a voz do iPhone.
             var audio: Data?
+            var failure: GeminiError?
             let waits: [UInt64] = [500_000_000, 1_200_000_000, 2_500_000_000]
             for attempt in 0...waits.count {
                 if Task.isCancelled { return }
@@ -652,9 +653,11 @@ final class ChatStore: ObservableObject {
                     audio = try await GeminiClient.speak(text: text, voice: voice)
                     break
                 } catch {
-                    if let gemini = error as? GeminiError,
-                       gemini.status == 429 || gemini.status == 401 || gemini.status == 403 {
-                        break
+                    if let gemini = error as? GeminiError {
+                        failure = gemini
+                        if gemini.status == 429 || gemini.status == 401 || gemini.status == 403 {
+                            break
+                        }
                     }
                     if attempt < waits.count {
                         try? await Task.sleep(nanoseconds: waits[attempt])
@@ -676,6 +679,12 @@ final class ChatStore: ObservableObject {
                     self.speechOfflineForReply = true
                     self.speechVoiceGap = true
                     self.player.enqueueSpeech(text)
+
+                    // Cota diária de voz esgotada: mostra a contagem regressiva
+                    // até a renovação, em vez de só ficar trocando de voz.
+                    if let failure, failure.status == 429, failure.dailyQuota {
+                        self.serverBusyUntil = ServerStatus.nextReset
+                    }
                 }
 
                 self.markSpeechStarted()

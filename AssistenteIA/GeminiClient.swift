@@ -797,6 +797,7 @@ enum GeminiClient {
                     if http.statusCode == 429 {
                         // Limite de uso da chave: trocar de modelo não resolve,
                         // só gasta mais pedidos. Devolve na hora.
+                        Diagnostics.record("voz \(model) -> 429 \(shortReason(raw))")
                         throw GeminiError(
                             message: friendly(429),
                             retryable: true,
