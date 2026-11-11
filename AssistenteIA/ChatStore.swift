@@ -73,6 +73,14 @@ final class ChatStore: ObservableObject {
         if settings.useLocation {
             location.request()
         }
+
+        // Autoteste silencioso: mostra no log o que o servidor está respondendo.
+        if hasKey {
+            let primary = settings.model
+            Task.detached(priority: .utility) {
+                await Diagnostics.run(primary: primary)
+            }
+        }
     }
 
     // MARK: - Leitura

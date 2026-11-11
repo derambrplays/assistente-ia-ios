@@ -54,6 +54,22 @@ struct ChangelogRelease: Identifiable {
 enum Changelog {
     static let releases: [ChangelogRelease] = [
         ChangelogRelease(
+            version: "2.5",
+            headline: "Diagnóstico na mão",
+            items: [
+                ChangelogItem(
+                    icon: "stethoscope",
+                    title: "Testar servidor",
+                    detail: "Em Ajustes → Diagnóstico, um botão testa a conexão e mostra o que o servidor respondeu."
+                ),
+                ChangelogItem(
+                    icon: "checklist",
+                    title: "Resposta exata",
+                    detail: "Aparece o status de cada modelo testado, para saber se é cota, chave ou modelo."
+                )
+            ]
+        ),
+        ChangelogRelease(
             version: "2.4",
             headline: "Mais seu, mais esperto",
             items: [

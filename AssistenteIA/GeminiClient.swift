@@ -108,6 +108,64 @@ enum GeminiClient {
         }
     }
 
+    // MARK: - Diagnóstico
+
+    /// Quantidade de modelos que a chave consegue listar.
+    static func modelCount() async -> Int {
+        (try? await listModels())?.count ?? -1
+    }
+
+    /// Testa uma mensagem mínima em um modelo e devolve status + motivo curto.
+    static func probe(model: String) async -> String {
+        guard let url = URL(string: "\(apiBase)/models/\(model):generateContent") else {
+            return "endereço inválido"
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        applyHeaders(&request, key: apiKey)
+
+        let body: [String: Any] = [
+            "contents": [["role": "user", "parts": [["text": "oi"]]]],
+            "generationConfig": ["maxOutputTokens": 1, "temperature": 0]
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { return "resposta inválida" }
+            let raw = String(data: data, encoding: .utf8) ?? ""
+            return "\(http.statusCode) \(shortReason(raw))"
+        } catch {
+            return "rede: \(error.localizedDescription)"
+        }
+    }
+
+    /// Testa a voz com uma palavra.
+    static func probeVoice() async -> String {
+        do {
+            _ = try await speak(text: "oi", voice: "Kore")
+            return "200 ok"
+        } catch let error as GeminiError {
+            return "\(error.status) \(error.message)"
+        } catch {
+            return "erro: \(error.localizedDescription)"
+        }
+    }
+
+    private static func shortReason(_ raw: String) -> String {
+        if let object = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+           let error = object["error"] as? [String: Any] {
+            let status = (error["status"] as? String) ?? ""
+            let message = ((error["message"] as? String) ?? "")
+                .replacingOccurrences(of: "\n", with: " ")
+            let short = String(message.prefix(160))
+            return status.isEmpty ? short : "\(status): \(short)"
+        }
+        return String(raw.prefix(140))
+    }
+
     private static func friendly(_ code: Int) -> String {
         switch code {
         case 400: return "Não consegui entender o pedido. Tente de novo."

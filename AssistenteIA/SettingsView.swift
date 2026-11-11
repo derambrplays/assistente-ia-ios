@@ -9,6 +9,8 @@ struct SettingsView: View {
     @State private var showKey = false
     @State private var newMemory = ""
     @State private var showWhatsNew = false
+    @State private var diagLines: [String] = []
+    @State private var diagRunning = false
 
     private var models: [String] {
         var list = store.availableModels
@@ -29,6 +31,7 @@ struct SettingsView: View {
                     locationCard
                     personalityCard
                     voiceCard
+                    diagnosticsCard
                     whatsNewCard
                     aboutCard
                 }
@@ -448,6 +451,61 @@ struct SettingsView: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassCard()
+    }
+
+    // MARK: - Diagnóstico
+
+    private var diagnosticsCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Diagnóstico", systemImage: "stethoscope")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+
+            Text("Testa a conexão com o servidor e mostra a resposta exata. Use se a IA parar de responder.")
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.textDim)
+
+            Button {
+                diagRunning = true
+                Task {
+                    await Diagnostics.run(primary: store.settings.model)
+                    await MainActor.run {
+                        diagLines = Diagnostics.summary
+                        diagRunning = false
+                    }
+                }
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: diagRunning ? "hourglass" : "bolt.horizontal.circle.fill")
+                        .font(.system(size: 13, weight: .bold))
+                    Text(diagRunning ? "Testando…" : "Testar servidor agora")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Capsule().fill(Theme.accent.opacity(0.85)))
+                .overlay(Capsule().strokeBorder(Color.white.opacity(0.2)))
+            }
+            .buttonStyle(PressableStyle())
+            .disabled(diagRunning)
+
+            if !diagLines.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(diagLines.suffix(8), id: \.self) { line in
+                        Text(line)
+                            .font(.system(size: 9.5, design: .monospaced))
+                            .foregroundStyle(Theme.textFaint)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.top, 2)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard()
+        .onAppear { diagLines = Diagnostics.summary }
     }
 
     // MARK: - Novidades
