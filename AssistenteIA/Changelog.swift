@@ -54,6 +54,27 @@ struct ChangelogRelease: Identifiable {
 enum Changelog {
     static let releases: [ChangelogRelease] = [
         ChangelogRelease(
+            version: "2.15",
+            headline: "As vozes naturais voltaram",
+            items: [
+                ChangelogItem(
+                    icon: "waveform",
+                    title: "Cada modelo de voz tem cota própria",
+                    detail: "Quando um modelo de voz estourava a cota, o app desistia da voz natural inteira. Agora ele tenta os outros modelos — e volta a falar com a voz escolhida por você."
+                ),
+                ChangelogItem(
+                    icon: "person.wave.2.fill",
+                    title: "Kore, Puck, Charon e as outras de volta",
+                    detail: "Com a voz natural funcionando, a voz do seletor é a que fala. A voz do iPhone só entra se todos os modelos estiverem sem cota."
+                ),
+                ChangelogItem(
+                    icon: "stethoscope",
+                    title: "Diagnóstico mostra modelo por modelo",
+                    detail: "O teste agora diz exatamente qual modelo de voz está sem cota e qual está funcionando."
+                )
+            ]
+        ),
+        ChangelogRelease(
             version: "2.14",
             headline: "Aviso certo quando a voz fica sem cota",
             items: [

@@ -89,6 +89,9 @@ enum Diagnostics {
 
         // Uma palavra na voz natural: mostra na hora se o problema é cota.
         record("voz -> \(await GeminiClient.probeVoice())")
+        for model in GeminiClient.ttsModels.prefix(3) {
+            record("tts \(model) -> \(await GeminiClient.probeTTSModel(model))")
+        }
         record("voz iphone: \(AudioPlayer.offlineVoiceName) [\(AudioPlayer.offlineVoiceQuality)]")
         recordList("vozes pt:", AudioPlayer.portugueseVoiceNames)
 

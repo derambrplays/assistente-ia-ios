@@ -26,10 +26,11 @@ enum GeminiClient {
     ]
 
     static let ttsModels = [
-        "gemini-2.5-flash-preview-tts",
-        "gemini-2.5-pro-preview-tts",
         "gemini-3.8-flash-lite-tts",
-        "gemini-3.8-flash-tts"
+        "gemini-3.8-flash-tts",
+        "gemini-3.1-flash-tts-preview",
+        "gemini-2.5-flash-preview-tts",
+        "gemini-2.5-pro-preview-tts"
     ]
 
     static let voices = [
@@ -249,6 +250,42 @@ enum GeminiClient {
 
             let hasImage = parts.contains { $0["inlineData"] != nil }
             return hasImage ? "200 imagem ok" : "200 sem imagem"
+        } catch {
+            return "rede: \(error.localizedDescription)"
+        }
+    }
+
+    /// Testa um modelo de voz específico, sem rotação — para o Diagnóstico
+    /// mostrar qual modelo tem cota e qual está bloqueado.
+    static func probeTTSModel(_ model: String) async -> String {
+        guard let url = URL(string: "\(apiBase)/models/\(model):generateContent") else {
+            return "endereço inválido"
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        applyHeaders(&request, key: apiKey)
+
+        let body: [String: Any] = [
+            "contents": [["role": "user", "parts": [["text": "oi"]]]],
+            "generationConfig": [
+                "responseModalities": ["AUDIO"],
+                "speechConfig": [
+                    "voiceConfig": ["prebuiltVoiceConfig": ["voiceName": "Kore"]]
+                ]
+            ]
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { return "resposta inválida" }
+            guard http.statusCode == 200 else {
+                let raw = String(data: data, encoding: .utf8) ?? ""
+                return "\(http.statusCode) \(shortReason(raw))"
+            }
+            return "200 ok"
         } catch {
             return "rede: \(error.localizedDescription)"
         }
@@ -702,29 +739,33 @@ enum GeminiClient {
     private static let ttsLock = NSLock()
     private static var ttsPreferred: String?
     private static var ttsBroken: Set<String> = []
+    /// Depois de um 429 em todos os modelos, espera um pouco antes de tentar
+    /// de novo (a cota pode ser por minuto ou por dia).
+    private static var ttsBlockedUntil: Date?
+    private static var ttsBlockedDaily = false
 
     /// Lembra qual modelo de voz funcionou para não testar os que falham a cada frase.
     private static func ttsOrder() -> [String] {
         ttsLock.lock()
         let preferred = ttsPreferred
-        let broken = ttsBroken
+        var broken = ttsBroken
         ttsLock.unlock()
 
-        var order: [String] = []
-        if let preferred = preferred, ttsModels.contains(preferred) {
-            order.append(preferred)
-        }
-        for model in ttsModels where model != preferred && !broken.contains(model) {
-            order.append(model)
-        }
-
-        // Se tudo foi marcado como quebrado (um erro passageiro pode fazer
-        // isso), recomeça a lista em vez de ficar sem voz para sempre.
-        if order.isEmpty {
+        // Um erro passageiro pode ter marcado tudo como quebrado; nesse caso
+        // recomeça a lista em vez de ficar sem voz para sempre.
+        if broken.count >= ttsModels.count {
             ttsLock.lock()
             ttsBroken.removeAll()
             ttsLock.unlock()
-            return ttsModels
+            broken = []
+        }
+
+        var order: [String] = []
+        if let preferred = preferred, ttsModels.contains(preferred), !broken.contains(preferred) {
+            order.append(preferred)
+        }
+        for model in ttsModels where !order.contains(model) && !broken.contains(model) {
+            order.append(model)
         }
         return order
     }
@@ -733,6 +774,8 @@ enum GeminiClient {
         ttsLock.lock()
         ttsPreferred = model
         ttsBroken.remove(model)
+        ttsBlockedUntil = nil
+        ttsBlockedDaily = false
         ttsLock.unlock()
     }
 
@@ -772,6 +815,24 @@ enum GeminiClient {
 
         var lastError = GeminiError(message: "Não consegui gerar a voz.", retryable: true)
 
+        // Se todos os modelos responderam 429 há pouco, não fica martelando:
+        // a cota pode ser por minuto (espera pouco) ou por dia (espera mais).
+        ttsLock.lock()
+        let blockedUntil = ttsBlockedUntil
+        let blockedDaily = ttsBlockedDaily
+        ttsLock.unlock()
+        if let blockedUntil = blockedUntil, blockedUntil > Date() {
+            throw GeminiError(
+                message: friendly(429),
+                retryable: true,
+                status: 429,
+                dailyQuota: blockedDaily
+            )
+        }
+
+        var sawQuota = false
+        var sawDailyQuota = false
+
         for model in ttsOrder() {
             guard let url = URL(string: "\(apiBase)/models/\(model):generateContent") else { continue }
             var request = URLRequest(url: url)
@@ -795,15 +856,19 @@ enum GeminiClient {
                         continue
                     }
                     if http.statusCode == 429 {
-                        // Limite de uso da chave: trocar de modelo não resolve,
-                        // só gasta mais pedidos. Devolve na hora.
+                        // Cada modelo tem a própria cota no plano gratuito:
+                        // tenta o próximo em vez de desistir da voz natural.
+                        let daily = isDailyQuota(raw)
                         Diagnostics.record("voz \(model) -> 429 \(shortReason(raw))")
-                        throw GeminiError(
+                        sawQuota = true
+                        sawDailyQuota = sawDailyQuota || daily
+                        lastError = GeminiError(
                             message: friendly(429),
                             retryable: true,
                             status: 429,
-                            dailyQuota: isDailyQuota(raw)
+                            dailyQuota: daily
                         )
+                        continue
                     }
                     lastError = GeminiError(
                         message: friendly(http.statusCode),
@@ -835,16 +900,21 @@ enum GeminiClient {
             } catch is CancellationError {
                 throw CancellationError()
             } catch let error as GeminiError {
-                // Não engolir o erro real: cota (429) e chave inválida precisam
-                // chegar em quem chamou, senão a resposta fica sem voz e sem
-                // explicação.
-                if error.status == 429 || error.status == 403 || error.status == 401 {
+                // Só chave/permissão inválida interrompe a rotação de modelos.
+                if error.status == 401 || error.status == 403 {
                     throw error
                 }
                 lastError = error
             } catch {
                 lastError = GeminiError(message: error.localizedDescription, retryable: true)
             }
+        }
+
+        if sawQuota {
+            ttsLock.lock()
+            ttsBlockedUntil = Date().addingTimeInterval(sawDailyQuota ? 3600 : 45)
+            ttsBlockedDaily = sawDailyQuota
+            ttsLock.unlock()
         }
 
         throw lastError
