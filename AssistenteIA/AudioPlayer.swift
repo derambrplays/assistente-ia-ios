@@ -74,7 +74,7 @@ final class AudioPlayer: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSp
             .map { "\($0.name) [\(qualityLabel($0.quality))]" }
     }
 
-    private static func qualityLabel(_ quality: AVSpeechSynthesisVoice.Quality) -> String {
+    private static func qualityLabel(_ quality: AVSpeechSynthesisVoiceQuality) -> String {
         switch quality {
         case .premium: return "Premium"
         case .enhanced: return "Melhorada"
