@@ -87,6 +87,9 @@ enum Diagnostics {
             record("imagem gerar \(model) -> \(status)")
         }
 
+        // Uma palavra na voz natural: mostra na hora se o problema é cota.
+        record("voz -> \(await GeminiClient.probeVoice())")
+
         guard deep else {
             record("teste concluído")
             return
@@ -105,9 +108,6 @@ enum Diagnostics {
             let search = await GeminiClient.probeSearch(model: first)
             record("busca \(first) -> \(search)")
         }
-
-        let tts = await GeminiClient.probeVoice()
-        record("voz -> \(tts)")
 
         record("teste concluído")
     }

@@ -48,6 +48,8 @@ final class ChatStore: ObservableObject {
     private var speechStarted = false
     private var speechChunkCount = 0
     private var speechVoiceGap = false
+    /// Nesta resposta a voz natural falhou e estamos usando a voz do iPhone.
+    private var speechOfflineForReply = false
     private var bargeInHandled = false
     private var lastSpeechFetch: Task<Void, Never>?
 
@@ -551,6 +553,7 @@ final class ChatStore: ObservableObject {
         speechStarted = false
         speechChunkCount = 0
         speechVoiceGap = false
+        speechOfflineForReply = false
         bargeInHandled = false
         lastSpeechFetch = nil
 
@@ -621,9 +624,10 @@ final class ChatStore: ObservableObject {
         speechScheduled += 1
         let generation = speechGeneration
 
-        // A voz robótica do iPhone só existe se a pessoa escolher "voz natural
-        // desligada". Com a voz natural ligada, nunca caímos nela sozinhos.
-        if !settings.naturalVoice {
+        // A voz do iPhone só entra se a pessoa desligou a voz natural, ou se a
+        // voz natural falhou de vez nesta resposta (melhor falar do que ficar
+        // mudo). Na próxima resposta volta a tentar a voz natural.
+        if !settings.naturalVoice || speechOfflineForReply {
             player.enqueueSpeech(text)
             markSpeechStarted()
             return
@@ -638,7 +642,8 @@ final class ChatStore: ObservableObject {
             guard let self = self else { return }
 
             // Várias tentativas: o limite da voz costuma ser passageiro e é
-            // melhor esperar do que trocar para uma voz robótica.
+            // melhor esperar do que trocar de voz. Mas cota esgotada não
+            // melhora esperando — nesse caso vai direto para a voz do iPhone.
             var audio: Data?
             let waits: [UInt64] = [500_000_000, 1_200_000_000, 2_500_000_000]
             for attempt in 0...waits.count {
@@ -647,6 +652,10 @@ final class ChatStore: ObservableObject {
                     audio = try await GeminiClient.speak(text: text, voice: voice)
                     break
                 } catch {
+                    if let gemini = error as? GeminiError,
+                       gemini.status == 429 || gemini.status == 401 || gemini.status == 403 {
+                        break
+                    }
                     if attempt < waits.count {
                         try? await Task.sleep(nanoseconds: waits[attempt])
                     }
@@ -660,10 +669,13 @@ final class ChatStore: ObservableObject {
                 if let audio = audio {
                     self.player.enqueue(data: audio)
                 } else {
-                    // Sem voz natural: fica em silêncio neste trecho (o texto
-                    // está na tela) em vez de usar a voz de robô.
-                    Diagnostics.record("voz falhou em um trecho da resposta")
+                    // A voz natural falhou mesmo depois das tentativas: fala o
+                    // resto desta resposta com a voz do iPhone em vez de ficar
+                    // mudo, e avisa no fim.
+                    Diagnostics.record("voz natural falhou; usando voz do iPhone nesta resposta")
+                    self.speechOfflineForReply = true
                     self.speechVoiceGap = true
+                    self.player.enqueueSpeech(text)
                 }
 
                 self.markSpeechStarted()
@@ -694,9 +706,7 @@ final class ChatStore: ObservableObject {
 
             if self.speechVoiceGap {
                 self.speechVoiceGap = false
-                if self.voiceMode {
-                    self.banner = "A voz natural falhou em um trecho. A resposta completa está na tela."
-                }
+                self.banner = "A voz natural falhou agora. Nesta resposta usei a voz do iPhone."
             }
 
             self.afterSpeech()

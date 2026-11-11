@@ -717,6 +717,15 @@ enum GeminiClient {
         for model in ttsModels where model != preferred && !broken.contains(model) {
             order.append(model)
         }
+
+        // Se tudo foi marcado como quebrado (um erro passageiro pode fazer
+        // isso), recomeça a lista em vez de ficar sem voz para sempre.
+        if order.isEmpty {
+            ttsLock.lock()
+            ttsBroken.removeAll()
+            ttsLock.unlock()
+            return ttsModels
+        }
         return order
     }
 
@@ -824,6 +833,14 @@ enum GeminiClient {
                 lastError = GeminiError(message: "O servidor não devolveu o áudio.", retryable: true)
             } catch is CancellationError {
                 throw CancellationError()
+            } catch let error as GeminiError {
+                // Não engolir o erro real: cota (429) e chave inválida precisam
+                // chegar em quem chamou, senão a resposta fica sem voz e sem
+                // explicação.
+                if error.status == 429 || error.status == 403 || error.status == 401 {
+                    throw error
+                }
+                lastError = error
             } catch {
                 lastError = GeminiError(message: error.localizedDescription, retryable: true)
             }

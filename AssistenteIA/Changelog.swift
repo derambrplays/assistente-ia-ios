@@ -54,6 +54,27 @@ struct ChangelogRelease: Identifiable {
 enum Changelog {
     static let releases: [ChangelogRelease] = [
         ChangelogRelease(
+            version: "2.12",
+            headline: "A voz voltou a falar sempre",
+            items: [
+                ChangelogItem(
+                    icon: "speaker.wave.2.fill",
+                    title: "Nunca fica mudo",
+                    detail: "Se a voz natural falhar de vez em uma resposta, ele fala com a voz do iPhone em vez de ficar em silêncio, e avisa que foi por causa de uma falha."
+                ),
+                ChangelogItem(
+                    icon: "arrow.clockwise",
+                    title: "Recupera a voz natural sozinho",
+                    detail: "Se um erro passageiro derrubar todos os modelos de voz, o app recomeça a lista na resposta seguinte em vez de ficar sem voz até reiniciar."
+                ),
+                ChangelogItem(
+                    icon: "stethoscope",
+                    title: "Diagnóstico mostra a voz",
+                    detail: "O teste automático agora mostra o que o servidor respondeu para a voz, para saber na hora se é cota ou falha de modelo."
+                )
+            ]
+        ),
+        ChangelogRelease(
             version: "2.11",
             headline: "Áudio entendido de verdade e imagens explicadas",
             items: [
